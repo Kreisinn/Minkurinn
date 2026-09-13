@@ -638,7 +638,7 @@ const viewInfo = () => `<h2>Trip notes</h2><p class="sub">Barcelona, 8–11 Octo
 
 /* Everything here derives from gross strokes; raw Stableford, no hole weights. */
 function playerStats(pid) {
-  const st = { rounds:0, holes:0, pts:0, best:0, birdies:0, blobs:0, w:0, h:0, l:0 };
+  const st = { rounds:0, holes:0, pts:0, best:0, birdies:0, netBirdies:0, blobs:0, w:0, h:0, l:0 };
   const p = player(pid);
   for (const round of DB.rounds) {
     const course = DB.courses.find(c => c.id === round.courseId);
@@ -653,10 +653,12 @@ function playerStats(pid) {
         const s = m.scores[pid]?.[hole.hole];
         if (!s || (!s.pickedUp && s.strokes == null)) continue;
         played++;
-        const pt = stableford(s, hole.par, strokesOnHole(ch, hole.si));
+        const recv = strokesOnHole(ch, hole.si);
+        const pt = stableford(s, hole.par, recv);
         rp += pt;
         if (pt === 0) st.blobs++;
         if (!s.pickedUp && s.strokes === hole.par - 1) st.birdies++;
+        if (!s.pickedUp && s.strokes - recv === hole.par - 1) st.netBirdies++;
       }
       if (played) { st.rounds++; st.pts += rp; st.holes += played; st.best = Math.max(st.best, rp); }
       if (round.kind === 'cup') {
@@ -687,6 +689,7 @@ function viewTeams() {
         <td class="num">${s.w}–${s.h}–${s.l}</td>
         <td class="num">${s.per18 == null ? '–' : s.per18.toFixed(1)}</td>
         <td class="num">${s.birdies || '–'}</td>
+        <td class="num">${s.netBirdies || '–'}</td>
       </tr>`;
     }).join('');
     return `<div class="card" style="padding:0;overflow:hidden">
@@ -695,13 +698,13 @@ function viewTeams() {
         <span style="font-size:13px;opacity:.85">avg hcp ${avg} · ${fmt(pts)} pt${pts === 1 ? '' : 's'}</span>
       </div>
       <div style="padding:6px 14px 12px">
-        <table><thead><tr><th>Player</th><th style="width:44px">Hcp</th><th style="width:56px">W–H–L</th><th style="width:48px">P/18</th><th style="width:40px">Bird</th></tr></thead>
+        <table><thead><tr><th>Player</th><th style="width:40px">Hcp</th><th style="width:52px">W–H–L</th><th style="width:44px">P/18</th><th style="width:38px">Bird</th><th style="width:38px">Net</th></tr></thead>
         <tbody>${rows}</tbody></table>
       </div>
     </div>`;
   };
   return `<h2>Teams</h2>
-    <p class="sub">Record counts finished cup matches · P/18 is Stableford points per 18 holes, all rounds</p>
+    <p class="sub">Record counts finished cup matches · P/18 is Stableford points per 18 holes · Bird is gross birdies, Net is net birdies with strokes</p>
     ${card('A')}${card('B')}`;
 }
 
