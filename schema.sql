@@ -50,6 +50,7 @@ create table rounds (
   idx          int  not null unique check (idx between 1 and 5),
   label        text not null,
   play_date    date not null,
+  kind         text not null default 'cup' check (kind in ('cup', 'roommates')),
   course_id    uuid references courses(id),
   tee_id       uuid references tees(id),
   hole_weights int[] not null default '{1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2}',
@@ -69,6 +70,7 @@ create table matches (
 create table match_players (
   match_id  uuid not null references matches(id) on delete cascade,
   player_id uuid not null references players(id),
+  pair      smallint check (pair in (1, 2)),  -- roommates round only
   primary key (match_id, player_id)
 );
 
@@ -98,12 +100,12 @@ insert into teams (key, name, color) values
   ('A', 'Team Gummi J', '#185FA5'),
   ('B', 'Team Siggi B', '#993C1D');
 
-insert into rounds (idx, label, play_date) values
-  (1, 'R1 - Thu 8 Oct',      '2026-10-08'),
-  (2, 'R2 - Fri 9 Oct AM',   '2026-10-09'),
-  (3, 'R3 - Fri 9 Oct PM',   '2026-10-09'),
-  (4, 'R4 - Sat 10 Oct',     '2026-10-10'),
-  (5, 'R5 - Sun 11 Oct',     '2026-10-11');
+insert into rounds (idx, label, play_date, kind, hole_weights) values
+  (1, 'R1 - Thu 8 Oct - Roommates', '2026-10-08', 'roommates', '{1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1}'),
+  (2, 'R2 - Fri 9 Oct AM',  '2026-10-09', 'cup', default),
+  (3, 'R3 - Fri 9 Oct PM',  '2026-10-09', 'cup', default),
+  (4, 'R4 - Sat 10 Oct',    '2026-10-10', 'cup', default),
+  (5, 'R5 - Sun 11 Oct',    '2026-10-11', 'cup', default);
 
 alter table teams         enable row level security;
 alter table players       enable row level security;

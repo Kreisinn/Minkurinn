@@ -161,7 +161,9 @@ function playMatch(match, round) {
 }
 function standing() {
   const t = { secA:0, secB:0, projA:0, projB:0, hpA:0, hpB:0, live:0 };
-  for (const round of DB.rounds) for (const m of round.matches) {
+  for (const round of DB.rounds) {
+    if (round.kind !== 'cup') continue;
+    for (const m of round.matches) {
     const r = playMatch(m, round);
     t.hpA += r.hpA; t.hpB += r.hpB;
     if (r.complete) { t.secA += r.matchPoints.A; t.secB += r.matchPoints.B;
@@ -170,6 +172,7 @@ function standing() {
       t.live++;
       if (r.margin > 0) t.projA += 1; else if (r.margin < 0) t.projB += 1;
       else { t.projA += .5; t.projB += .5; }
+    }
     }
   }
   return t;
@@ -226,11 +229,13 @@ async function loadAll() {
   DB.info = info.sort((a,b) => a.sort - b.sort);
 
   DB.rounds = rounds.sort((a,b) => a.idx - b.idx).map(r => ({
-    id:r.id, idx:r.idx, label:r.label, date:r.play_date,
+    id:r.id, idx:r.idx, label:r.label, date:r.play_date, kind:r.kind || 'cup',
     courseId:r.course_id, teeId:r.tee_id, weights:r.hole_weights,
     matches: matches.filter(m => m.round_id === r.id).sort((a,b) => a.slot - b.slot).map(m => ({
       id:m.id, slot:m.slot, teeTime:(m.tee_time || '').slice(0,5),
       players: mp.filter(x => x.match_id === m.id).map(x => x.player_id),
+      pairOf: mp.filter(x => x.match_id === m.id)
+                .reduce((a, x) => { a[x.player_id] = x.pair; return a; }, {}),
       scores: scores.filter(s => s.match_id === m.id).reduce((acc, s) => {
         (acc[s.player_id] ??= {})[s.hole] = { strokes:s.strokes, pickedUp:s.picked_up };
         return acc;
@@ -307,13 +312,24 @@ const saveHole = (courseId, hole, patch) =>
 const saveRound = (id, patch) => push(() => sb.from('rounds').update(patch).eq('id', id));
 
 async function generatePairings(round) {
+  const times = ['09:20','09:30','09:40','09:50'];
+
+  if (round.kind === 'roommates') {
+    await sb.from('matches').delete().eq('round_id', round.id);
+    const res = await sb.from('matches')
+      .insert(times.map((t, i) => ({ round_id:round.id, slot:i+1, tee_time:t })));
+    authMsg = res.error ? res.error.message : 'Four groups created. Assign the pairs below.';
+    return refresh();
+  }
+
   const byTeam = t => DB.players.filter(p => p.team === t).sort((a,b) => a.slot - b.slot);
   const A = byTeam('A'), B = byTeam('B');
   if (A.length !== 8 || B.length !== 8) { authMsg = 'Need eight players on each team first.'; return render(); }
 
-  const pa = partnerRotation(round.idx);
-  const pb = [...partnerRotation(round.idx)].reverse();
-  const times = ['09:20','09:30','09:40','09:50'];
+  // Cup rounds are 2..5, so they map onto rotation rounds 1..4.
+  const rot = Math.max(1, round.idx - 1);
+  const pa = partnerRotation(rot);
+  const pb = [...partnerRotation(rot)].reverse();
 
   await sb.from('matches').delete().eq('round_id', round.id);
   const { data, error } = await sb.from('matches')
@@ -331,10 +347,54 @@ async function generatePairings(round) {
   await refresh();
 }
 
+async function savePairAssign(matchId) {
+  const sels = [...document.querySelectorAll(`select[data-slotmatch="${matchId}"]`)];
+  const rows = sels.filter(s => s.value)
+    .map(s => ({ match_id:matchId, player_id:s.value, pair:+s.dataset.slotpair }));
+  await sb.from('match_players').delete().eq('match_id', matchId);
+  if (rows.length) {
+    const res = await sb.from('match_players').insert(rows);
+    if (res.error) { authMsg = res.error.message; return render(); }
+  }
+  await refresh();
+}
+
+/* Combined-points leaderboard for the roommates round. */
+function roommatesBoard(round) {
+  const course = DB.courses.find(c => c.id === round.courseId);
+  const tee = DB.tees.find(t => t.id === round.teeId);
+  if (!course || !tee) return [];
+  const board = [];
+  for (const m of round.matches) {
+    for (const pairNo of [1, 2]) {
+      const ids = m.players.filter(id => m.pairOf[id] === pairNo);
+      if (!ids.length) continue;
+      const rows = ids.map(id => {
+        const p = player(id);
+        const ch = courseHandicap(p.index, tee.slope, tee.cr, course.par);
+        let pts = 0, thru = 0;
+        for (const hole of course.holes) {
+          const s = m.scores[id]?.[hole.hole];
+          if (!s || (!s.pickedUp && s.strokes == null)) break;
+          pts += stableford(s, hole.par, strokesOnHole(ch, hole.si)) * (round.weights || WEIGHTS)[hole.hole - 1];
+          thru++;
+        }
+        return { p, pts, thru };
+      });
+      board.push({
+        names: rows.map(r => r.p.name),
+        pts: rows.reduce((a, r) => a + r.pts, 0),
+        thru: Math.min(...rows.map(r => r.thru)),
+      });
+    }
+  }
+  return board.sort((a, b) => b.pts - a.pts || b.thru - a.thru);
+}
+
 /* ---------- views ---------- */
 function renderBoard() {
   const t = standing();
-  const w = v => (v / 20 * 100).toFixed(2) + '%';
+  const w = v => (v / 16 * 100).toFixed(2) + '%';
   const label = conn === 'live' ? '' : conn === 'offline'
     ? `saving when back online${pending.length ? ` · ${pending.length}` : ''}` : 'connecting…';
   document.getElementById('board').innerHTML = `
@@ -369,6 +429,20 @@ function viewLive() {
   const round = DB.rounds.find(r => r.idx === roundIdx);
   if (!round) return `<h2>No rounds yet</h2><p class="sub">Run schema.sql and seed.sql in Supabase.</p>`;
   const course = DB.courses.find(c => c.id === round.courseId);
+
+  if (round.kind === 'roommates') {
+    const board = roommatesBoard(round);
+    const rows = board.length ? board.map((r, i) => `<div class="scorerow" style="padding:10px 14px">
+        <span class="num" style="width:24px;color:var(--faint)">${i + 1}</span>
+        <div class="who"><b>${esc(r.names.join(' & '))}</b></div>
+        <span class="num" style="font-size:19px;font-weight:600">${r.pts}</span>
+        <span style="width:56px;text-align:right;font-size:13px;color:var(--faint)">${r.thru === 18 ? 'final' : r.thru ? `thru ${r.thru}` : '–'}</span>
+      </div>`).join('') : `<p class="sub" style="padding:14px">No pairs assigned yet. Set them up in Admin.</p>`;
+    return `<h2>Roommates Round</h2>
+      <p class="sub">${esc(round.label)} · combined Stableford points per pair · separate from the cup</p>
+      ${roundChips()}<div class="match">${rows}</div>`;
+  }
+
   const cards = round.matches.length ? round.matches.map(m => {
     const r = playMatch(m, round), st = matchState(r);
     const side = t => m.players.map(player).filter(p => p?.team === t)
@@ -405,12 +479,16 @@ function viewScorer() {
 
   const hole = course.holes[scorerHole - 1];
   const weight = (round.weights || WEIGHTS)[scorerHole - 1];
-  const roster = m.players.map(id => {
+  const rm = round.kind === 'roommates';
+  const ids = rm
+    ? [...m.players].sort((a, b) => (m.pairOf[a] ?? 9) - (m.pairOf[b] ?? 9))
+    : m.players;
+  const roster = ids.map(id => {
     const p = player(id);
     const ch = courseHandicap(p.index, tee.slope, tee.cr, course.par);
     const recv = strokesOnHole(ch, hole.si);
     const sc = m.scores[p.id]?.[scorerHole] ?? null;
-    return { ...p, recv, sc, pts: stableford(sc, hole.par, recv) };
+    return { ...p, pairNo: m.pairOf[id], recv, sc, pts: stableford(sc, hole.par, recv) };
   });
 
   const rows = roster.map(p => `<div class="scorerow">
@@ -425,16 +503,38 @@ function viewScorer() {
 
   let verdict = '<span style="color:var(--faint)">Enter all four scores to settle the hole.</span>';
   if (roster.every(p => p.sc)) {
-    const r = resolveHole(roster.filter(p => p.team === 'A').map(p => p.pts),
-                          roster.filter(p => p.team === 'B').map(p => p.pts));
-    verdict = r.winner === 'halved' ? '<b>Hole halved</b>'
-      : `<b class="${r.winner}">${esc(TEAMS[r.winner].name)} wins the hole</b> <span style="color:var(--mid)">— ${
-          r.decidedAt === 0 ? `best scores ${r.a[0]} v ${r.b[0]}`
-                            : `level at ${r.a[0]} on top, partners ${r.a[1]} v ${r.b[1]}`
-        }${weight > 1 ? `, worth ${weight}` : ''}</span>`;
+    if (rm) {
+      const sum = n => roster.filter(p => p.pairNo === n).reduce((a, p) => a + p.pts * weight, 0);
+      verdict = `<b>Hole points</b> <span style="color:var(--mid)">— pair 1: ${sum(1)}, pair 2: ${sum(2)}${weight > 1 ? ` (worth ${weight}×)` : ''}</span>`;
+    } else {
+      const r = resolveHole(roster.filter(p => p.team === 'A').map(p => p.pts),
+                            roster.filter(p => p.team === 'B').map(p => p.pts));
+      verdict = r.winner === 'halved' ? '<b>Hole halved</b>'
+        : `<b class="${r.winner}">${esc(TEAMS[r.winner].name)} wins the hole</b> <span style="color:var(--mid)">— ${
+            r.decidedAt === 0 ? `best scores ${r.a[0]} v ${r.b[0]}`
+                              : `level at ${r.a[0]} on top, partners ${r.a[1]} v ${r.b[1]}`
+          }${weight > 1 ? `, worth ${weight}` : ''}</span>`;
+    }
   }
 
-  const st = matchState(playMatch(m, round));
+  let statusCard;
+  if (rm) {
+    const board = roommatesBoard(round).filter(b =>
+      b.names.some(n => roster.find(p => p.name === n)));
+    statusCard = `<div class="card">
+      <div style="font-size:13px;color:var(--mid);text-align:center;margin-bottom:8px">This group's pairs</div>
+      ${board.map(b => `<div style="display:flex;justify-content:space-between;font-size:15px;padding:4px 0">
+        <span>${esc(b.names.join(' & '))}</span>
+        <span class="num" style="font-weight:600">${b.pts}<span style="color:var(--faint);font-weight:400;font-size:13px"> thru ${b.thru}</span></span>
+      </div>`).join('')}</div>`;
+  } else {
+    const st = matchState(playMatch(m, round));
+    statusCard = `<div class="card" style="text-align:center">
+      <div style="font-size:13px;color:var(--mid)">Match status</div>
+      <div class="${st.cls}" style="font-size:22px;font-weight:600">${esc(st.text)}</div>
+    </div>`;
+  }
+
   return `<button class="btn ghost" data-back style="margin-bottom:14px">All matches</button>
     <div class="card">
       <div class="holebar"><div class="h num">${scorerHole}</div>
@@ -447,10 +547,7 @@ function viewScorer() {
         <button class="btn" data-hole="1" ${scorerHole === 18 ? 'disabled' : ''}>Next hole</button>
       </div>
     </div>
-    <div class="card" style="text-align:center">
-      <div style="font-size:13px;color:var(--mid)">Match status</div>
-      <div class="${st.cls}" style="font-size:22px;font-weight:600">${esc(st.text)}</div>
-    </div>`;
+    ${statusCard}`;
 }
 
 const viewInfo = () => `<h2>Trip notes</h2><p class="sub">Barcelona, 8–11 October</p>` +
@@ -487,8 +584,11 @@ function viewAdmin() {
       <label>Course</label>
       <select data-setcourse>${DB.courses.map(c =>
         `<option value="${c.id}" ${c.id === round?.courseId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
-      <div style="margin-top:12px"><button class="btn ghost" data-repair>Generate pairings for this round</button></div>
-      <p style="font-size:13px;color:var(--faint);margin:10px 0 0">Rotation gives every player a different partner in each of the five rounds. Regenerating clears any scores already entered for the round.</p>
+      <div style="margin-top:12px"><button class="btn ghost" data-repair>${round?.kind === 'roommates' ? 'Create the four groups' : 'Generate pairings for this round'}</button></div>
+      <p style="font-size:13px;color:var(--faint);margin:10px 0 0">${round?.kind === 'roommates'
+        ? 'The roommates round is paired by hand. Create the groups, then assign two pairs to each below. Recreating the groups clears any scores already entered.'
+        : 'Rotation gives every player a different partner in each of the four cup rounds. Regenerating clears any scores already entered for the round.'}</p>
+      ${round?.kind === 'roommates' ? pairEditor(round) : ''}
     </div>
 
     ${course ? `<div class="card"><h2 style="font-size:16px;margin-bottom:10px">${esc(course.name)}</h2>
@@ -500,6 +600,29 @@ function viewAdmin() {
 }
 
 const VIEWS = { live:viewLive, scorer:viewScorer, info:viewInfo, admin:viewAdmin };
+
+function pairEditor(round) {
+  if (!round.matches.length) return '';
+  const used = round.matches.flatMap(m => m.players);
+  const dupes = [...new Set(used.filter((id, i) => used.indexOf(id) !== i))]
+    .map(id => player(id)?.name).filter(Boolean);
+  const opt = (sel) => `<option value=""></option>` + DB.players.map(p =>
+    `<option value="${p.id}" ${p.id === sel ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
+  const seat = (m, pairNo, i) => {
+    const cur = m.players.filter(id => m.pairOf[id] === pairNo);
+    return `<select data-slotmatch="${m.id}" data-slotpair="${pairNo}" aria-label="Group ${m.slot} pair ${pairNo} player ${i + 1}" style="margin-bottom:6px">${opt(cur[i])}</select>`;
+  };
+  return `${dupes.length ? `<div class="note" style="margin-top:12px">In two groups: ${esc(dupes.join(', '))}.</div>` : ''}
+    ${round.matches.map(m => `
+    <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
+      <div style="font-size:13px;color:var(--mid);margin-bottom:6px">Group ${m.slot} · ${esc(m.teeTime)}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div><label>Pair 1</label>${seat(m, 1, 0)}${seat(m, 1, 1)}</div>
+        <div><label>Pair 2</label>${seat(m, 2, 0)}${seat(m, 2, 1)}</div>
+      </div>
+    </div>`).join('')}`;
+}
+
 const TABS = [
   { id:'live', icon:'⛳', label:'Matches' }, { id:'scorer', icon:'✎', label:'Score' },
   { id:'info', icon:'≡', label:'Notes' }, { id:'admin', icon:'⚙', label:'Admin' },
@@ -546,6 +669,7 @@ document.addEventListener('click', async e => {
 
 document.addEventListener('change', e => {
   const d = e.target.dataset;
+  if (d.slotmatch) { savePairAssign(d.slotmatch); return; }
   if (d.pname) {
     const v = e.target.value.trim(); if (!v) return;
     player(d.pname).name = v; savePlayer(d.pname, { name:v });
