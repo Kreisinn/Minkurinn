@@ -55,6 +55,10 @@ node --test src/scoring.test.js
 
 ## Setup
 
+If the database was created from an older version of these files (symptom:
+only a "White" tee exists), run `reset.sql` first, then continue below - the
+migration-*.sql files are only for preserving data that matters.
+
 1. Create a Supabase project. Put its URL and anon key in `CONFIG` at the top of
    the script in `index.html`.
 2. Run `schema.sql`, then `seed.sql`, in the Supabase SQL editor.
