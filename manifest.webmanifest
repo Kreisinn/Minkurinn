@@ -1,0 +1,16 @@
+{
+  "name": "El Prat Cup 2026",
+  "short_name": "El Prat Cup",
+  "description": "Live team match play scoring for the Barcelona trip, 8-11 October 2026.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#191E24",
+  "theme_color": "#191E24",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -1,0 +1,73 @@
+# El Prat Cup 2026
+
+Live team match play scoring for the Barcelona golf trip, 8–11 October 2026.
+Sixteen players, two teams, five rounds at Real Club de Golf El Prat.
+
+A single static page backed by Supabase. No build step, no app store, no install —
+players open a link and add it to their home screen.
+
+## The format
+
+Four matches per round, two players from each team in every group.
+
+On each hole, compare the two teams' Stableford points:
+
+1. Highest points wins the hole.
+2. If the best scores are level across teams, the partners' scores decide it.
+3. Level again, and the hole is halved.
+
+The 18th hole counts double. Every match plays all 18 holes — no close-outs.
+A won match is worth one point, a halved match a half. Five rounds means twenty
+points, so 10–10 is possible; aggregate hole-points are tracked as the tiebreak.
+
+Handicaps are full allowance (100%), WHS course handicap, strokes by stroke index.
+
+## Layout
+
+```
+index.html              the whole app
+manifest.webmanifest    home-screen install
+sw.js                   offline shell
+icon-*.png              app icons
+schema.sql              tables, RLS policies, realtime
+seed.sql                players, placeholder course, info pages
+src/scoring.js          scoring engine, extracted and testable
+src/scoring.test.js     rules locked down by tests
+```
+
+The engine in `src/` mirrors the copy inside `index.html`. Change one, change both,
+and run the tests.
+
+```
+node --test src/scoring.test.js
+```
+
+## Setup
+
+1. Create a Supabase project. Put its URL and anon key in `CONFIG` at the top of
+   the script in `index.html`.
+2. Run `schema.sql`, then `seed.sql`, in the Supabase SQL editor.
+3. Deploy this folder to any static host over HTTPS.
+4. In Supabase, Authentication → URL Configuration: add the deployed URL to both
+   Site URL and Redirect URLs, or magic-link sign-in will fail silently.
+5. Open the app, sign in on the Admin tab, then **turn off new signups** in
+   Supabase. The policies grant edit rights to any authenticated user, so an open
+   signup form is an open admin door.
+6. Generate pairings for each of the five rounds.
+
+## Before the trip
+
+- **Replace the course data.** `seed.sql` ships a placeholder card. El Prat is 45
+  holes configured as different 18-hole layouts, and stroke index is assigned per
+  configuration. Get the official card for each round's exact layout from the club.
+  Wrong indexes mean wrong hole winners all week.
+- Replace the `info_pages` rows with real hotel, transport and dinner details.
+
+## Notes
+
+- Only gross strokes are stored. Net scores, points, hole winners and standings are
+  all derived on read, so correcting a handicap mid-trip re-scores everything.
+- Anyone with the link can enter scores. That is deliberate, and it is not a
+  security boundary.
+- Failed writes queue in memory and retry, so the scorer keeps working with no
+  signal. The queue does not survive a force-quit.
