@@ -32,10 +32,15 @@ button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 .mid{text-align:center;padding-bottom:4px;flex:1}
 .mid .lbl{font-size:11px;letter-spacing:.06em;color:#8D96A1}
 .mid .sec{font-size:13px;color:#C8CFD7;white-space:nowrap}
-.bar{display:flex;height:10px;border-radius:5px;overflow:hidden;background:#2C333B;margin-top:10px}
-.bar i{display:block;height:100%}
-.bar .sA{background:#4A87D8}.bar .pA{background:#4A87D8;opacity:.42}
-.bar .pB{background:#DE6258;opacity:.42}.bar .sB{background:#DE6258}
+.segwrap{position:relative;margin-top:10px}
+.segbar{display:flex;gap:2px;height:24px}
+.seg{position:relative;flex:1;background:#2C333B;overflow:hidden}
+.segbar .seg:first-child{border-radius:5px 0 0 5px}
+.segbar .seg:last-child{border-radius:0 5px 5px 0}
+.seg b{position:absolute;top:0;bottom:0}
+.tick{position:absolute;top:-3px;bottom:-3px;width:2px;background:#EDF0F3;opacity:.75;transform:translateX(-1px)}
+.boardcap{display:flex;justify-content:center;gap:8px;font-size:12px;color:#8D96A1;margin-top:8px}
+.winpill{display:inline-block;font-size:10px;letter-spacing:.06em;background:#EDF0F3;color:#191E24;border-radius:999px;padding:1px 8px;margin-left:6px;vertical-align:middle}
 .conn{position:absolute;top:6px;left:50%;transform:translateX(-50%);font-size:10px;letter-spacing:.06em;color:#7E8792}
 .conn.warn{color:#E8B04B}
 
@@ -45,6 +50,19 @@ h2{font-size:19px;font-weight:600;margin:0 0 2px}
 .chips{display:flex;gap:6px;overflow-x:auto;margin:0 0 16px;padding-bottom:2px}
 .chip{padding:6px 12px;border-radius:999px;background:var(--paper);border:1px solid var(--line);white-space:nowrap;font-size:14px;color:var(--mid)}
 .chip[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:#fff}
+
+.mcard{border-radius:10px;overflow:hidden;margin-bottom:10px;border:1px solid var(--line);background:var(--paper)}
+.mrow{display:grid;grid-template-columns:1fr 66px 1fr}
+.mside{padding:11px 12px;color:#fff;font-size:14px;display:flex;flex-direction:column;gap:2px;justify-content:center;min-width:0}
+.mside span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mside.mA{background:var(--blue)}
+.mside.mB{background:var(--red);text-align:right}
+.mmid{background:var(--board);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px 2px}
+.mbig{font-family:'Barlow Condensed',Barlow,sans-serif;font-variant-numeric:tabular-nums;font-size:25px;font-weight:600;line-height:1;color:#fff}
+.mbig em{font-style:normal;font-size:11px;letter-spacing:.05em;margin-left:2px}
+.msub{font-size:10px;letter-spacing:.06em;color:#9AA3AD;margin-top:3px;text-transform:uppercase;white-space:nowrap}
+.mtape{display:flex;gap:2px;height:7px}
+.mtape i{display:block}
 
 .match{background:var(--paper);border:1px solid var(--line);border-radius:10px;margin-bottom:10px;overflow:hidden}
 .match-top{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid var(--line)}
@@ -167,13 +185,14 @@ function playMatch(match, round) {
   return out;
 }
 function standing() {
-  const t = { secA:0, secB:0, projA:0, projB:0, hpA:0, hpB:0, live:0 };
+  const t = { secA:0, secB:0, projA:0, projB:0, hpA:0, hpB:0, live:0, done:0 };
   for (const round of DB.rounds) {
     if (round.kind !== 'cup') continue;
     for (const m of round.matches) {
     const r = playMatch(m, round);
     t.hpA += r.hpA; t.hpB += r.hpB;
-    if (r.complete) { t.secA += r.matchPoints.A; t.secB += r.matchPoints.B;
+    if (r.complete) { t.done++;
+                      t.secA += r.matchPoints.A; t.secB += r.matchPoints.B;
                       t.projA += r.matchPoints.A; t.projB += r.matchPoints.B; }
     else if (r.played > 0) {
       t.live++;
@@ -411,35 +430,90 @@ function roommatesBoard(round) {
 /* ---------- views ---------- */
 function renderBoard() {
   const t = standing();
-  const w = v => (v / 16 * 100).toFixed(2) + '%';
   const label = conn === 'live' ? '' : conn === 'offline'
     ? `saving when back online${pending.length ? ` · ${pending.length}` : ''}` : 'connecting…';
+
+  // One cell per point. Gamlir fills solid+faded from the left, Ungir from the right.
+  const cells = Array.from({ length: 16 }, (_, i) => {
+    const clamp = v => Math.max(0, Math.min(1, v));
+    const sA = clamp(t.secA - i), pA = clamp(t.projA - i) - sA;
+    const j = 15 - i;
+    const sB = clamp(t.secB - j), pB = clamp(t.projB - j) - sB;
+    return `<i class="seg">
+      ${sA > 0 ? `<b style="left:0;width:${sA * 100}%;background:#4A87D8"></b>` : ''}
+      ${pA > 0 ? `<b style="left:${sA * 100}%;width:${pA * 100}%;background:#4A87D8;opacity:.4"></b>` : ''}
+      ${sB > 0 ? `<b style="right:0;width:${sB * 100}%;background:#DE6258"></b>` : ''}
+      ${pB > 0 ? `<b style="right:${sB * 100}%;width:${pB * 100}%;background:#DE6258;opacity:.4"></b>` : ''}
+    </i>`;
+  }).join('');
+
+  // Winner: first to 8½ secured; at 8-8 after all 16, hole points decide.
+  let winA = '', winB = '';
+  if (t.secA > 8) winA = '<span class="winpill">WINNER</span>';
+  else if (t.secB > 8) winB = '<span class="winpill">WINNER</span>';
+  else if (t.done === 16 && t.secA === 8) {
+    if (t.hpA > t.hpB) winA = '<span class="winpill">WINNER · HOLES</span>';
+    else if (t.hpB > t.hpA) winB = '<span class="winpill">WINNER · HOLES</span>';
+  }
+
   document.getElementById('board').innerHTML = `
     ${label ? `<div class="conn ${conn === 'offline' ? 'warn' : ''}">${esc(label)}</div>` : ''}
     <div class="board-row">
-      <div class="side"><span class="nm">${esc(TEAMS.A.name)}</span><span class="pt num">${fmt(t.projA)}</span></div>
+      <div class="side"><span class="nm">${esc(TEAMS.A.name)}${winA}</span><span class="pt num">${fmt(t.projA)}</span></div>
       <div class="mid">
-        <div class="lbl">projected</div>
-        <div class="sec num">secured ${fmt(t.secA)} – ${fmt(t.secB)}${t.live ? ` · ${t.live} live` : ''}</div>
+        <div class="lbl">PROJECTED</div>
+        <div class="sec num">8½ to win</div>
       </div>
-      <div class="side r"><span class="nm">${esc(TEAMS.B.name)}</span><span class="pt num">${fmt(t.projB)}</span></div>
+      <div class="side r"><span class="nm">${esc(TEAMS.B.name)}${winB}</span><span class="pt num">${fmt(t.projB)}</span></div>
     </div>
-    <div class="bar">
-      <i class="sA" style="width:${w(t.secA)}"></i>
-      <i class="pA" style="width:${w(Math.max(0, t.projA - t.secA))}"></i>
-      <i style="flex:1"></i>
-      <i class="pB" style="width:${w(Math.max(0, t.projB - t.secB))}"></i>
-      <i class="sB" style="width:${w(t.secB)}"></i>
+    <div class="segwrap">
+      <div class="segbar">${cells}</div>
+      <div class="tick" style="left:${(8.5 / 16 * 100).toFixed(3)}%"></div>
+    </div>
+    <div class="boardcap num">
+      <span>${t.done}/16 matches complete</span>
+      <span>·</span>
+      <span>secured ${fmt(t.secA)} – ${fmt(t.secB)}</span>
+      ${t.live ? `<span>·</span><span>${t.live} live</span>` : ''}
     </div>`;
 }
 
 const roundChips = () => `<div class="chips">${DB.rounds.map(r =>
   `<button class="chip" aria-pressed="${r.idx === roundIdx}" data-round="${r.idx}">${esc(r.label)}</button>`).join('')}</div>`;
 
-function matchState(r) {
-  if (r.played === 0) return { text:'Not started', cls:'' };
-  if (r.margin === 0) return { text: r.complete ? 'Halved' : 'All square', cls:'' };
-  return { text:`${(r.margin > 0 ? TEAMS.A : TEAMS.B).name} ${Math.abs(r.margin)} up`, cls: r.margin > 0 ? 'A' : 'B' };
+/* Ryder Cup style match card: team panels, dark status chip, per-hole tape.
+   The 18th cell is double width because it's worth double. */
+function matchCard(m, round) {
+  const r = playMatch(m, round);
+  const side = t => m.players.map(player).filter(p => p?.team === t)
+    .map(p => `<span>${esc(p.name)}</span>`).join('');
+
+  let big, sub;
+  if (r.played === 0) { big = `<span style="font-size:14px">${esc(m.teeTime)}</span>`; sub = 'first tee'; }
+  else if (r.margin === 0) { big = 'A/S'; sub = r.complete ? 'final' : `thru ${r.played}`; }
+  else {
+    const col = r.margin > 0 ? '#4A87D8' : '#DE6258';
+    big = `<span style="color:${col}">${Math.abs(r.margin)}<em>UP</em></span>`;
+    sub = r.complete ? 'final' : `thru ${r.played}`;
+  }
+
+  const course = DB.courses.find(c => c.id === round.courseId);
+  const tape = (course?.holes ?? []).map((h, i) => {
+    const res = r.results[i];
+    const bg = !res ? '#E4E7EA'
+      : res.winner === 'A' ? 'var(--blue)'
+      : res.winner === 'B' ? 'var(--red)' : '#B9C0C7';
+    return `<i style="flex:${(round.weights || WEIGHTS)[i]};background:${bg}"></i>`;
+  }).join('');
+
+  return `<div class="mcard">
+    <div class="mrow">
+      <div class="mside mA">${side('A')}</div>
+      <div class="mmid"><div class="mbig num">${big}</div><div class="msub">${sub}</div></div>
+      <div class="mside mB">${side('B')}</div>
+    </div>
+    <div class="mtape">${tape}</div>
+  </div>`;
 }
 
 function viewLive() {
@@ -460,16 +534,9 @@ function viewLive() {
       ${roundChips()}<div class="match">${rows}</div>`;
   }
 
-  const cards = round.matches.length ? round.matches.map(m => {
-    const r = playMatch(m, round), st = matchState(r);
-    const side = t => m.players.map(player).filter(p => p?.team === t)
-      .map(p => `<span>${esc(p.name)}</span>`).join('');
-    return `<div class="match">
-      <div class="match-top"><span class="tt num">${esc(m.teeTime)}</span>
-        <span class="state ${st.cls}">${esc(st.text)}<span class="thru">${r.complete ? 'final' : r.played ? `thru ${r.played}` : ''}</span></span></div>
-      <div class="pairs"><div class="pair A">${side('A')}</div><div class="v">v</div><div class="pair r B">${side('B')}</div></div>
-    </div>`;
-  }).join('') : `<p class="sub">No pairings yet. Generate them in Admin.</p>`;
+  const cards = round.matches.length
+    ? round.matches.map(m => matchCard(m, round)).join('')
+    : `<p class="sub">No pairings yet. Generate them in Admin.</p>`;
 
   return `<h2>Live matches</h2>
     <p class="sub">${esc(round.label)} · ${esc(course?.name ?? 'course not set')}</p>
@@ -546,11 +613,7 @@ function viewScorer() {
         <span class="num" style="font-weight:600">${b.pts}<span style="color:var(--faint);font-weight:400;font-size:13px"> thru ${b.thru}</span></span>
       </div>`).join('')}</div>`;
   } else {
-    const st = matchState(playMatch(m, round));
-    statusCard = `<div class="card" style="text-align:center">
-      <div style="font-size:13px;color:var(--mid)">Match status</div>
-      <div class="${st.cls}" style="font-size:22px;font-weight:600">${esc(st.text)}</div>
-    </div>`;
+    statusCard = matchCard(m, round);
   }
 
   return `<button class="btn ghost" data-back style="margin-bottom:14px">All matches</button>
