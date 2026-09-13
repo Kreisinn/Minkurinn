@@ -1,16 +1,16 @@
--- Run after schema.sql on a fresh database.
--- Course data comes from the club's published scorecards
--- (realclubdegolfelprat.com, retrieved 13 Sep 2026). Tee times from the
--- Barcelona Golf Travel booking, ref 2440. Handicap indexes are guesses -
--- fix them in Admin before the trip.
+-- Real course data for Amarillo and Rosa, taken from the club's published
+-- scorecards (realclubdegolfelprat.com, retrieved 13 Sep 2026), plus the booked
+-- tee times from Barcelona Golf Travel (ref 2440).
+--
+-- Run this on an existing database. Fresh installs get the same data from the
+-- updated seed.sql and must NOT run this file.
+-- Safe to re-run; it replaces all course data. Scores reference matches, not
+-- courses, so nothing entered is lost.
 
--- The trip roster: Gamlir (born up to Oct 1963) v Ungir. Handicap indexes are
--- guesses - fix them in Admin before the trip.
-insert into players (name, team, slot, handicap_index) values
-  ('Stebbi','A',1,14.7), ('Gummi H','A',2,10.2), ('Gummi J','A',3,13.5), ('Benni','A',4,17.3),
-  ('Garðar','A',5,24.2), ('Siggi','A',6,20.4), ('Guðbjörn','A',7,7.8), ('Valdi','A',8,8.9),
-  ('Andri','B',1,12.4), ('Steini','B',2,18.1), ('Daði','B',3,19.8), ('Elliði','B',4,14.2),
-  ('Kiddi','B',5,9.6), ('Jón Ingi','B',6,15.0), ('Jón Þór','B',7,11.5), ('Knútur','B',8,16.4);
+alter table rounds add column if not exists start_time time;
+
+update rounds set course_id = null, tee_id = null;
+delete from courses;
 
 insert into courses (name, par) values
   ('Amarillo (Yellow)', 72),
@@ -65,9 +65,3 @@ with pick as (
 )
 update rounds r set course_id = p.cid, tee_id = p.tid, start_time = p.st
 from pick p where p.idx = r.idx;
-
-insert into info_pages (slug, title, body, sort) values
-  ('travel','Getting there','El Prat is in Terrassa, about 30 minutes northwest of central Barcelona at Plans de Bonvilar 17. Club phone +34 937 281 000. Taxis take roughly 25 minutes in the morning, longer coming back through rush hour.',1),
-  ('schedule','The schedule','Thu 8 Oct 11:05 Amarillo (roommates). Fri 9 Oct 08:00 Rosa and 13:05 Amarillo - 36 holes, eat when you can. Sat 10 Oct 13:55 Amarillo. Sun 11 Oct 13:20 Rosa.',2),
-  ('format','The format','Round 1 is the Roommates Round: combined Stableford points per pair, highest total wins, separate from the cup. Rounds 2-5 are the El Prat Cup: on each hole the highest Stableford points wins it; if the best scores are level, the partners decide; level again and the hole is halved. The 18th counts double in cup rounds. Every match plays all 18 holes.',3),
-  ('dress','Dress code','Collared shirt, no denim, soft spikes. The clubhouse asks for smart casual after the round.',4);

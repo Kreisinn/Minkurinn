@@ -15,6 +15,7 @@ create table players (
   team            text not null references teams(key),
   slot            int  not null check (slot between 1 and 8),
   handicap_index  numeric(4,1) not null,
+  tee_name        text not null default 'Amarillas',
   unique (team, slot)
 );
 
@@ -50,6 +51,7 @@ create table rounds (
   idx          int  not null unique check (idx between 1 and 5),
   label        text not null,
   play_date    date not null,
+  start_time   time,
   kind         text not null default 'cup' check (kind in ('cup', 'roommates')),
   course_id    uuid references courses(id),
   tee_id       uuid references tees(id),
@@ -97,8 +99,8 @@ create table info_pages (
 );
 
 insert into teams (key, name, color) values
-  ('A', 'Team Gummi J', '#185FA5'),
-  ('B', 'Team Siggi B', '#993C1D');
+  ('A', 'Gamlir', '#1B4B8F'),
+  ('B', 'Ungir', '#B3322A');
 
 insert into rounds (idx, label, play_date, kind, hole_weights) values
   (1, 'R1 - Thu 8 Oct - Roommates', '2026-10-08', 'roommates', '{1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1}'),

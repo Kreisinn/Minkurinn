@@ -68,11 +68,15 @@ node --test src/scoring.test.js
 
 ## Before the trip
 
-- **Replace the course data.** `seed.sql` ships a placeholder card. El Prat is 45
-  holes configured as different 18-hole layouts, and stroke index is assigned per
-  configuration. Get the official card for each round's exact layout from the club.
-  Wrong indexes mean wrong hole winners all week.
-- Replace the `info_pages` rows with real hotel, transport and dinner details.
+- **Verify the course data on arrival.** Par, stroke index and men's ratings for
+  the Amarillo and Rosa configurations are transcribed from the club's published
+  scorecards (Sep 2026) and the booked tee times from the Barcelona Golf Travel
+  confirmation. Check them against the physical card in the pro shop on day one;
+  a changed stroke index changes hole winners. `courses-elprat.sql` reloads the
+  course data on an existing database.
+- Confirm which tees the club puts you on — rounds default to Amarillas, with
+  Blancas one dropdown away in Admin.
+- Replace the guessed handicap indexes in Admin with real ones.
 
 ## Notes
 

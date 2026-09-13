@@ -129,15 +129,22 @@ function resolveHole(aPts, bPts) {
   }
   return { winner:'halved', decidedAt:null, a, b };
 }
+/* A player's tee for a round: their named preference on that round's course,
+   falling back to the round's default tee. */
+function teeFor(p, round) {
+  return DB.tees.find(t => t.courseId === round.courseId && t.name === p.teeName)
+      || DB.tees.find(t => t.id === round.teeId);
+}
 function playMatch(match, round) {
   const course = DB.courses.find(c => c.id === round.courseId);
-  const tee = DB.tees.find(t => t.id === round.teeId);
   const out = { results:[], played:0, complete:false, margin:0, hpA:0, hpB:0, matchPoints:null };
-  if (!course || !tee || !match.players.length) return out;
+  if (!course || !match.players.length) return out;
   const roster = match.players.map(pid => {
     const p = player(pid);
-    return p && { ...p, ch: courseHandicap(p.index, tee.slope, tee.cr, course.par) };
+    const tee = p && teeFor(p, round);
+    return tee && { ...p, ch: courseHandicap(p.index, tee.slope, tee.cr, course.par) };
   }).filter(Boolean);
+  if (roster.length !== match.players.length) return out;
   const A = roster.filter(p => p.team === 'A'), B = roster.filter(p => p.team === 'B');
   for (const hole of course.holes) {
     const done = roster.every(p => {
@@ -185,7 +192,7 @@ const partnerRotation = round => {
 };
 
 /* ---------- state ---------- */
-const TEAMS = { A:{ name:'Team Gummi J' }, B:{ name:'Team Siggi B' } };
+const TEAMS = { A:{ name:'Team A' }, B:{ name:'Team B' } }; // real names load from the teams table
 const DB = { players:[], courses:[], tees:[], rounds:[], info:[] };
 let sb = null, session = null, conn = 'connecting', pending = [];
 let route = 'live', roundIdx = 1, scorerMatch = null, scorerHole = 1, authMsg = '';
@@ -209,13 +216,16 @@ async function loadAll() {
     if (error) throw new Error(`${t}: ${error.message}`);
     return data;
   };
-  const [players, courses, holes, tees, rounds, matches, mp, scores, info] = await Promise.all([
-    q('players'), q('courses'), q('course_holes'), q('tees'),
+  const [teams, players, courses, holes, tees, rounds, matches, mp, scores, info] = await Promise.all([
+    q('teams'), q('players'), q('courses'), q('course_holes'), q('tees'),
     q('rounds'), q('matches'), q('match_players'), q('scores'), q('info_pages'),
   ]);
 
+  for (const t of teams) if (TEAMS[t.key]) TEAMS[t.key].name = t.name;
+
   DB.players = players
-    .map(p => ({ id:p.id, name:p.name, team:p.team, slot:p.slot, index:Number(p.handicap_index) }))
+    .map(p => ({ id:p.id, name:p.name, team:p.team, slot:p.slot,
+                 index:Number(p.handicap_index), teeName:p.tee_name || 'Amarillas' }))
     .sort((a,b) => a.team.localeCompare(b.team) || a.slot - b.slot);
 
   DB.courses = courses.map(c => ({
@@ -230,6 +240,7 @@ async function loadAll() {
 
   DB.rounds = rounds.sort((a,b) => a.idx - b.idx).map(r => ({
     id:r.id, idx:r.idx, label:r.label, date:r.play_date, kind:r.kind || 'cup',
+    startTime:(r.start_time || '').slice(0,5) || null,
     courseId:r.course_id, teeId:r.tee_id, weights:r.hole_weights,
     matches: matches.filter(m => m.round_id === r.id).sort((a,b) => a.slot - b.slot).map(m => ({
       id:m.id, slot:m.slot, teeTime:(m.tee_time || '').slice(0,5),
@@ -312,7 +323,12 @@ const saveHole = (courseId, hole, patch) =>
 const saveRound = (id, patch) => push(() => sb.from('rounds').update(patch).eq('id', id));
 
 async function generatePairings(round) {
-  const times = ['09:20','09:30','09:40','09:50'];
+  // Four groups off the booked first tee time at ten-minute intervals.
+  const [h, mn] = (round.startTime || '09:20').split(':').map(Number);
+  const times = [0, 10, 20, 30].map(add => {
+    const t = h * 60 + mn + add;
+    return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
+  });
 
   if (round.kind === 'roommates') {
     await sb.from('matches').delete().eq('round_id', round.id);
@@ -362,8 +378,7 @@ async function savePairAssign(matchId) {
 /* Combined-points leaderboard for the roommates round. */
 function roommatesBoard(round) {
   const course = DB.courses.find(c => c.id === round.courseId);
-  const tee = DB.tees.find(t => t.id === round.teeId);
-  if (!course || !tee) return [];
+  if (!course) return [];
   const board = [];
   for (const m of round.matches) {
     for (const pairNo of [1, 2]) {
@@ -371,6 +386,8 @@ function roommatesBoard(round) {
       if (!ids.length) continue;
       const rows = ids.map(id => {
         const p = player(id);
+        const tee = teeFor(p, round);
+        if (!tee) return { p, pts: 0, thru: 0 };
         const ch = courseHandicap(p.index, tee.slope, tee.cr, course.par);
         let pts = 0, thru = 0;
         for (const hole of course.holes) {
@@ -422,7 +439,7 @@ const roundChips = () => `<div class="chips">${DB.rounds.map(r =>
 function matchState(r) {
   if (r.played === 0) return { text:'Not started', cls:'' };
   if (r.margin === 0) return { text: r.complete ? 'Halved' : 'All square', cls:'' };
-  return { text:`${r.margin > 0 ? 'Gummi J' : 'Siggi B'} ${Math.abs(r.margin)} up`, cls: r.margin > 0 ? 'A' : 'B' };
+  return { text:`${(r.margin > 0 ? TEAMS.A : TEAMS.B).name} ${Math.abs(r.margin)} up`, cls: r.margin > 0 ? 'A' : 'B' };
 }
 
 function viewLive() {
@@ -474,8 +491,8 @@ function viewScorer() {
 
   const m = round.matches.find(x => x.id === scorerMatch);
   const course = DB.courses.find(c => c.id === round.courseId);
-  const tee = DB.tees.find(t => t.id === round.teeId);
-  if (!m || !course || !tee) { scorerMatch = null; return viewScorer(); }
+  const defTee = DB.tees.find(t => t.id === round.teeId);
+  if (!m || !course) { scorerMatch = null; return viewScorer(); }
 
   const hole = course.holes[scorerHole - 1];
   const weight = (round.weights || WEIGHTS)[scorerHole - 1];
@@ -485,15 +502,16 @@ function viewScorer() {
     : m.players;
   const roster = ids.map(id => {
     const p = player(id);
-    const ch = courseHandicap(p.index, tee.slope, tee.cr, course.par);
+    const tee = teeFor(p, round);
+    const ch = tee ? courseHandicap(p.index, tee.slope, tee.cr, course.par) : 0;
     const recv = strokesOnHole(ch, hole.si);
     const sc = m.scores[p.id]?.[scorerHole] ?? null;
-    return { ...p, pairNo: m.pairOf[id], recv, sc, pts: stableford(sc, hole.par, recv) };
+    return { ...p, tee, pairNo: m.pairOf[id], recv, sc, pts: stableford(sc, hole.par, recv) };
   });
 
   const rows = roster.map(p => `<div class="scorerow">
       <div class="who"><b class="${p.team}">${esc(p.name)}</b>
-        <small>${p.recv > 0 ? `${p.recv} stroke${p.recv > 1 ? 's' : ''}` : p.recv < 0 ? 'gives 1' : 'no stroke'}</small></div>
+        <small>${p.recv > 0 ? `${p.recv} stroke${p.recv > 1 ? 's' : ''}` : p.recv < 0 ? 'gives 1' : 'no stroke'}${p.tee && p.tee.name !== defTee?.name ? ` · ${esc(p.tee.name)}` : ''}</small></div>
       <div class="stepper">
         <button data-step="-1" data-pid="${p.id}" aria-label="Fewer strokes for ${esc(p.name)}">−</button>
         <span class="val num">${p.sc ? p.sc.strokes : '–'}</span>
@@ -555,6 +573,75 @@ const viewInfo = () => `<h2>Trip notes</h2><p class="sub">Barcelona, 8–11 Octo
     <p style="margin:6px 0 0;color:var(--mid);font-size:15px">${esc(p.body)}</p></div>`).join('')
    || `<p class="sub">Nothing added yet.</p>`);
 
+/* Everything here derives from gross strokes; raw Stableford, no hole weights. */
+function playerStats(pid) {
+  const st = { rounds:0, holes:0, pts:0, best:0, birdies:0, blobs:0, w:0, h:0, l:0 };
+  const p = player(pid);
+  for (const round of DB.rounds) {
+    const course = DB.courses.find(c => c.id === round.courseId);
+    if (!course) continue;
+    for (const m of round.matches) {
+      if (!m.players.includes(pid)) continue;
+      const tee = teeFor(p, round);
+      if (!tee) continue;
+      const ch = courseHandicap(p.index, tee.slope, tee.cr, course.par);
+      let rp = 0, played = 0;
+      for (const hole of course.holes) {
+        const s = m.scores[pid]?.[hole.hole];
+        if (!s || (!s.pickedUp && s.strokes == null)) continue;
+        played++;
+        const pt = stableford(s, hole.par, strokesOnHole(ch, hole.si));
+        rp += pt;
+        if (pt === 0) st.blobs++;
+        if (!s.pickedUp && s.strokes === hole.par - 1) st.birdies++;
+      }
+      if (played) { st.rounds++; st.pts += rp; st.holes += played; st.best = Math.max(st.best, rp); }
+      if (round.kind === 'cup') {
+        const r = playMatch(m, round);
+        if (r.complete) {
+          const mp = r.matchPoints[p.team];
+          if (mp === 1) st.w++; else if (mp === 0.5) st.h++; else st.l++;
+        }
+      }
+    }
+  }
+  st.per18 = st.holes ? (st.pts / st.holes * 18) : null;
+  return st;
+}
+
+function viewTeams() {
+  const st = standing();
+  const card = key => {
+    const roster = DB.players.filter(p => p.team === key);
+    if (!roster.length) return '';
+    const avg = (roster.reduce((a, p) => a + p.index, 0) / roster.length).toFixed(1);
+    const pts = key === 'A' ? st.secA : st.secB;
+    const rows = roster.map(p => {
+      const s = playerStats(p.id);
+      return `<tr>
+        <td>${esc(p.name)}${p.teeName !== 'Amarillas' ? ` <span style="color:var(--faint);font-size:12px">${esc(p.teeName)}</span>` : ''}</td>
+        <td class="num">${p.index}</td>
+        <td class="num">${s.w}–${s.h}–${s.l}</td>
+        <td class="num">${s.per18 == null ? '–' : s.per18.toFixed(1)}</td>
+        <td class="num">${s.birdies || '–'}</td>
+      </tr>`;
+    }).join('');
+    return `<div class="card" style="padding:0;overflow:hidden">
+      <div style="background:${key === 'A' ? 'var(--blue)' : 'var(--red)'};color:#fff;padding:10px 14px;display:flex;justify-content:space-between;align-items:baseline">
+        <b>${esc(TEAMS[key].name)}</b>
+        <span style="font-size:13px;opacity:.85">avg hcp ${avg} · ${fmt(pts)} pt${pts === 1 ? '' : 's'}</span>
+      </div>
+      <div style="padding:6px 14px 12px">
+        <table><thead><tr><th>Player</th><th style="width:44px">Hcp</th><th style="width:56px">W–H–L</th><th style="width:48px">P/18</th><th style="width:40px">Bird</th></tr></thead>
+        <tbody>${rows}</tbody></table>
+      </div>
+    </div>`;
+  };
+  return `<h2>Teams</h2>
+    <p class="sub">Record counts finished cup matches · P/18 is Stableford points per 18 holes, all rounds</p>
+    ${card('A')}${card('B')}`;
+}
+
 function viewAdmin() {
   if (!session) return `<h2>Admin</h2>
     <p class="sub">Sign in to edit players, courses and pairings. Scoring works without this.</p>
@@ -568,27 +655,38 @@ function viewAdmin() {
   const round = DB.rounds.find(r => r.idx === roundIdx);
   const course = DB.courses.find(c => c.id === round?.courseId);
   return `<h2>Admin</h2><p class="sub">Signed in as ${esc(session.user.email)} · <button data-signout style="text-decoration:underline">sign out</button></p>
-    <div class="note">Course data below is a placeholder. Replace par and stroke index with the official card for each configuration before the trip — wrong indexes mean wrong hole winners all week.</div>
+    <div class="note">Course data is transcribed from the club's published scorecards (Sep 2026). Check it against the card in the pro shop on day one — a changed stroke index changes hole winners.</div>
     ${authMsg ? `<div class="note">${esc(authMsg)}</div>` : ''}
 
     <div class="card"><h2 style="font-size:16px;margin-bottom:10px">Players</h2>
-      <table><thead><tr><th>Name</th><th>Team</th><th style="width:72px">Index</th></tr></thead><tbody>
-      ${DB.players.map(p => `<tr>
+      <table><thead><tr><th>Name</th><th>Team</th><th style="width:64px">Index</th><th style="width:104px">Tees</th></tr></thead><tbody>
+      ${DB.players.map(p => {
+        const names = [...new Set(DB.tees.map(t => t.name))];
+        return `<tr>
         <td><input data-pname="${p.id}" value="${esc(p.name)}"></td>
-        <td><span class="${p.team}">${p.team === 'A' ? 'Gummi J' : 'Siggi B'}</span> <span style="color:var(--faint)">#${p.slot}</span></td>
-        <td><input data-pidx="${p.id}" value="${p.index}" inputmode="decimal"></td></tr>`).join('')}
-      </tbody></table></div>
+        <td><span class="${p.team}">${esc(TEAMS[p.team].name)}</span> <span style="color:var(--faint)">#${p.slot}</span></td>
+        <td><input data-pidx="${p.id}" value="${p.index}" inputmode="decimal"></td>
+        <td><select data-ptee="${p.id}">${names.map(n =>
+          `<option value="${esc(n)}" ${n === p.teeName ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></td>
+      </tr>`;}).join('')}
+      </tbody></table>
+      <p style="font-size:13px;color:var(--faint);margin:10px 0 0">Each player's tee applies on every course; course handicap adjusts automatically, so mixed tees stay fair.</p>
+    </div>
 
     <div class="card"><h2 style="font-size:16px;margin-bottom:10px">Rounds</h2>
       ${roundChips()}
+      ${round?.startTime ? `<p style="font-size:13px;color:var(--faint);margin:0 0 10px">First tee ${esc(round.startTime)} · groups every 10 minutes</p>` : ''}
       <label>Course</label>
       <select data-setcourse>${DB.courses.map(c =>
         `<option value="${c.id}" ${c.id === round?.courseId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
+      <label style="margin-top:10px">Tees</label>
+      <select data-settee>${DB.tees.filter(t => t.courseId === round?.courseId).map(t =>
+        `<option value="${t.id}" ${t.id === round?.teeId ? 'selected' : ''}>${esc(t.name)} · ${t.cr} / ${t.slope}</option>`).join('')}</select>
       <div style="margin-top:12px"><button class="btn ghost" data-repair>${round?.kind === 'roommates' ? 'Create the four groups' : 'Generate pairings for this round'}</button></div>
       <p style="font-size:13px;color:var(--faint);margin:10px 0 0">${round?.kind === 'roommates'
         ? 'The roommates round is paired by hand. Create the groups, then assign two pairs to each below. Recreating the groups clears any scores already entered.'
-        : 'Rotation gives every player a different partner in each of the four cup rounds. Regenerating clears any scores already entered for the round.'}</p>
-      ${round?.kind === 'roommates' ? pairEditor(round) : ''}
+        : 'Rotation gives every player a different partner across the cup rounds. Any match can also be edited by hand below — for round 5, generate first, then let the captains overwrite the picks. Regenerating clears any scores already entered for the round.'}</p>
+      ${round ? pairEditor(round) : ''}
     </div>
 
     ${course ? `<div class="card"><h2 style="font-size:16px;margin-bottom:10px">${esc(course.name)}</h2>
@@ -599,33 +697,40 @@ function viewAdmin() {
       </tbody></table></div>` : ''}`;
 }
 
-const VIEWS = { live:viewLive, scorer:viewScorer, info:viewInfo, admin:viewAdmin };
+const VIEWS = { live:viewLive, teams:viewTeams, scorer:viewScorer, info:viewInfo, admin:viewAdmin };
 
 function pairEditor(round) {
   if (!round.matches.length) return '';
+  const cup = round.kind !== 'roommates';
   const used = round.matches.flatMap(m => m.players);
   const dupes = [...new Set(used.filter((id, i) => used.indexOf(id) !== i))]
     .map(id => player(id)?.name).filter(Boolean);
-  const opt = (sel) => `<option value=""></option>` + DB.players.map(p =>
+  const opt = (sel, pool) => `<option value=""></option>` + pool.map(p =>
     `<option value="${p.id}" ${p.id === sel ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
   const seat = (m, pairNo, i) => {
-    const cur = m.players.filter(id => m.pairOf[id] === pairNo);
-    return `<select data-slotmatch="${m.id}" data-slotpair="${pairNo}" aria-label="Group ${m.slot} pair ${pairNo} player ${i + 1}" style="margin-bottom:6px">${opt(cur[i])}</select>`;
+    // Cup rounds: column 1 is team A, column 2 is team B. Roommates: free pairs.
+    const pool = cup ? DB.players.filter(p => p.team === (pairNo === 1 ? 'A' : 'B')) : DB.players;
+    const cur = cup
+      ? m.players.filter(id => player(id)?.team === (pairNo === 1 ? 'A' : 'B'))
+      : m.players.filter(id => m.pairOf[id] === pairNo);
+    return `<select data-slotmatch="${m.id}" data-slotpair="${pairNo}" aria-label="Group ${m.slot} ${cup ? 'team' : 'pair'} ${pairNo} player ${i + 1}" style="margin-bottom:6px">${opt(cur[i], pool)}</select>`;
   };
+  const colLabel = n => cup ? esc(TEAMS[n === 1 ? 'A' : 'B'].name) : `Pair ${n}`;
   return `${dupes.length ? `<div class="note" style="margin-top:12px">In two groups: ${esc(dupes.join(', '))}.</div>` : ''}
     ${round.matches.map(m => `
     <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
       <div style="font-size:13px;color:var(--mid);margin-bottom:6px">Group ${m.slot} · ${esc(m.teeTime)}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-        <div><label>Pair 1</label>${seat(m, 1, 0)}${seat(m, 1, 1)}</div>
-        <div><label>Pair 2</label>${seat(m, 2, 0)}${seat(m, 2, 1)}</div>
+        <div><label>${colLabel(1)}</label>${seat(m, 1, 0)}${seat(m, 1, 1)}</div>
+        <div><label>${colLabel(2)}</label>${seat(m, 2, 0)}${seat(m, 2, 1)}</div>
       </div>
     </div>`).join('')}`;
 }
 
 const TABS = [
-  { id:'live', icon:'⛳', label:'Matches' }, { id:'scorer', icon:'✎', label:'Score' },
-  { id:'info', icon:'≡', label:'Notes' }, { id:'admin', icon:'⚙', label:'Admin' },
+  { id:'live', icon:'⛳', label:'Matches' }, { id:'teams', icon:'⚑', label:'Teams' },
+  { id:'scorer', icon:'✎', label:'Score' }, { id:'info', icon:'≡', label:'Notes' },
+  { id:'admin', icon:'⚙', label:'Admin' },
 ];
 
 function render() {
@@ -676,11 +781,18 @@ document.addEventListener('change', e => {
   } else if (d.pidx) {
     const v = parseFloat(e.target.value); if (Number.isNaN(v)) return;
     player(d.pidx).index = v; savePlayer(d.pidx, { handicap_index:v });
+  } else if (d.ptee) {
+    player(d.ptee).teeName = e.target.value;
+    savePlayer(d.ptee, { tee_name:e.target.value });
   } else if (d.setcourse !== undefined) {
     const round = DB.rounds.find(r => r.idx === roundIdx);
     const tee = DB.tees.find(t => t.courseId === e.target.value);
     round.courseId = e.target.value; round.teeId = tee?.id ?? null;
     saveRound(round.id, { course_id:round.courseId, tee_id:round.teeId });
+  } else if (d.settee !== undefined) {
+    const round = DB.rounds.find(r => r.idx === roundIdx);
+    round.teeId = e.target.value;
+    saveRound(round.id, { tee_id:round.teeId });
   } else if (d.par || d.si) {
     const round = DB.rounds.find(r => r.idx === roundIdx);
     const course = DB.courses.find(c => c.id === round.courseId);
