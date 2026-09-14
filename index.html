@@ -23,25 +23,22 @@ body{font-family:Barlow,system-ui,sans-serif;color:var(--ink);background:var(--w
 button{font-family:inherit;font-size:inherit;cursor:pointer;border:0;background:none;color:inherit}
 button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 
-.board{position:sticky;top:0;z-index:20;background:var(--board);color:#fff;padding:12px 16px 14px;padding-top:max(12px,env(safe-area-inset-top))}
-.board-row{display:flex;align-items:flex-end;justify-content:space-between;gap:12px}
-.side{display:flex;flex-direction:column;min-width:0}
-.side.r{align-items:flex-end;text-align:right}
-.side .nm{font-size:12px;letter-spacing:.04em;color:#B7BFC9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:38vw}
-.side .pt{font-size:40px;font-weight:600;line-height:.95}
-.mid{text-align:center;padding-bottom:4px;flex:1}
-.mid .lbl{font-size:11px;letter-spacing:.06em;color:#8D96A1}
-.mid .sec{font-size:13px;color:#C8CFD7;white-space:nowrap}
-.segwrap{position:relative;margin-top:10px}
-.segbar{display:flex;gap:2px;height:24px}
+.board{position:sticky;top:0;z-index:20;background:var(--board);color:#fff;padding:7px 14px 10px;padding-top:max(7px,env(safe-area-inset-top))}
+.btop{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.btop .nm{font-size:12px;letter-spacing:.04em;color:#B7BFC9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.btop .bmid{font-size:10px;letter-spacing:.05em;color:#8D96A1;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bmain{display:flex;align-items:center;gap:10px;margin-top:8px}
+.bnum{font-family:'Barlow Condensed',Barlow,sans-serif;font-variant-numeric:tabular-nums;font-size:25px;font-weight:600;line-height:1;min-width:28px;text-align:center}
+.segwrap{position:relative;flex:1}
+.segbar{display:flex;gap:2px;height:14px}
 .seg{position:relative;flex:1;background:#2C333B;overflow:hidden}
 .segbar .seg:first-child{border-radius:5px 0 0 5px}
 .segbar .seg:last-child{border-radius:0 5px 5px 0}
 .seg b{position:absolute;top:0;bottom:0}
-.tick{position:absolute;top:-3px;bottom:-3px;width:2px;background:#EDF0F3;opacity:.75;transform:translateX(-1px)}
-.boardcap{display:flex;justify-content:center;gap:8px;font-size:12px;color:#8D96A1;margin-top:8px}
+.tick{position:absolute;top:-2px;bottom:-2px;width:2px;background:#EDF0F3;opacity:.75;transform:translateX(-1px)}
+.ticklbl{position:absolute;top:-13px;transform:translateX(-50%);font-size:9px;color:#9AA3AD}
 .winpill{display:inline-block;font-size:10px;letter-spacing:.06em;background:#EDF0F3;color:#191E24;border-radius:999px;padding:1px 8px;margin-left:6px;vertical-align:middle}
-.conn{position:absolute;top:6px;left:50%;transform:translateX(-50%);font-size:10px;letter-spacing:.06em;color:#7E8792}
+.conn{position:absolute;top:1px;left:50%;transform:translateX(-50%);font-size:9px;letter-spacing:.06em;color:#7E8792}
 .conn.warn{color:#E8B04B}
 
 main{max-width:640px;margin:0 auto;padding:16px}
@@ -483,23 +480,19 @@ function renderBoard() {
 
   document.getElementById('board').innerHTML = `
     ${label ? `<div class="conn ${conn === 'offline' ? 'warn' : ''}">${esc(label)}</div>` : ''}
-    <div class="board-row">
-      <div class="side"><span class="nm">${esc(TEAMS.A.name)}${winA}</span><span class="pt num">${fmt(t.projA)}</span></div>
-      <div class="mid">
-        <div class="lbl">PROJECTED</div>
-        <div class="sec num">8½ to win</div>
+    <div class="btop">
+      <span class="nm">${esc(TEAMS.A.name)}${winA}</span>
+      <span class="bmid num">projected · secured ${fmt(t.secA)}–${fmt(t.secB)} · ${t.done}/16${t.live ? ` · ${t.live} live` : ''}</span>
+      <span class="nm">${esc(TEAMS.B.name)}${winB}</span>
+    </div>
+    <div class="bmain">
+      <span class="bnum" style="color:#4A87D8">${fmt(t.projA)}</span>
+      <div class="segwrap">
+        <div class="segbar">${cells}</div>
+        <div class="tick" style="left:${(8.5 / 16 * 100).toFixed(3)}%"></div>
+        <span class="ticklbl num" style="left:${(8.5 / 16 * 100).toFixed(3)}%">8½</span>
       </div>
-      <div class="side r"><span class="nm">${esc(TEAMS.B.name)}${winB}</span><span class="pt num">${fmt(t.projB)}</span></div>
-    </div>
-    <div class="segwrap">
-      <div class="segbar">${cells}</div>
-      <div class="tick" style="left:${(8.5 / 16 * 100).toFixed(3)}%"></div>
-    </div>
-    <div class="boardcap num">
-      <span>${t.done}/16 matches complete</span>
-      <span>·</span>
-      <span>secured ${fmt(t.secA)} – ${fmt(t.secB)}</span>
-      ${t.live ? `<span>·</span><span>${t.live} live</span>` : ''}
+      <span class="bnum" style="color:#DE6258">${fmt(t.projB)}</span>
     </div>`;
 }
 
