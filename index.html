@@ -113,10 +113,15 @@ input,select{width:100%;font:inherit;padding:8px 10px;border:1px solid var(--lin
 .who{flex:1;min-width:0}
 .who b{display:block;font-weight:500;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .who small{color:var(--faint);font-size:12px}
-.stepper{display:flex;align-items:center;gap:2px}
-.stepper button{width:36px;height:36px;border:1px solid var(--line);border-radius:8px;font-size:19px;line-height:1;background:var(--paper)}
-.stepper .val{width:34px;text-align:center;font-size:19px;font-weight:600}
+.prow{width:100%;text-align:left;border-radius:8px;padding:10px 8px}
+.prow.selrow{background:#EAF1F9;box-shadow:inset 0 0 0 2px var(--blue)}
+.scorechip{min-width:38px;text-align:center;font-size:18px;font-weight:600;padding:5px 4px;border-radius:8px}
 .pts{width:46px;text-align:right;font-size:14px;color:var(--mid)}
+.pad{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:12px}
+.padbtn{padding:13px 0;font-size:20px;font-weight:600;border:1px solid var(--line);border-radius:10px;background:var(--paper)}
+.padbtn:active{background:var(--wash)}
+.padbtn[disabled]{opacity:.4}
+.padp{grid-column:1/-1;font-size:14px;padding:10px 0;font-family:Barlow,sans-serif;font-weight:500}
 .verdict{margin:14px 0;padding:12px 14px;border-radius:10px;background:var(--wash);font-size:15px}
 .nav2{display:flex;gap:8px;margin-top:6px}
 .nav2 .btn{flex:1;text-align:center}
@@ -235,7 +240,7 @@ const partnerRotation = round => {
 const TEAMS = { A:{ name:'Team A' }, B:{ name:'Team B' } }; // real names load from the teams table
 const DB = { players:[], courses:[], tees:[], rounds:[], info:[] };
 let sb = null, session = null, conn = 'connecting', pending = [];
-let route = 'live', roundIdx = 1, scorerMatch = null, scorerHole = 1, playerView = null, authMsg = '';
+let route = 'live', roundIdx = 1, scorerMatch = null, scorerHole = 1, scorerSel = null, advTimer = null, playerView = null, authMsg = '';
 
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const player = id => DB.players.find(p => p.id === id);
@@ -352,9 +357,9 @@ async function flush() {
 addEventListener('online', flush);
 setInterval(() => { if (pending.length) flush(); }, 15000);
 
-const saveScore = (matchId, playerId, hole, strokes) =>
+const saveScore = (matchId, playerId, hole, strokes, pickedUp = false) =>
   push(() => sb.from('scores').upsert(
-    { match_id:matchId, player_id:playerId, hole, strokes, picked_up:false, updated_at:new Date().toISOString() },
+    { match_id:matchId, player_id:playerId, hole, strokes, picked_up:pickedUp, updated_at:new Date().toISOString() },
     { onConflict:'match_id,player_id,hole' }));
 
 const savePlayer = (id, patch) => push(() => sb.from('players').update(patch).eq('id', id));
@@ -597,15 +602,26 @@ function viewScorer() {
     return { ...p, tee, pairNo: m.pairOf[id], recv, sc, pts: stableford(sc, hole.par, recv) };
   });
 
-  const rows = roster.map(p => `<div class="scorerow">
+  // Selection: an explicit tap wins; otherwise the first player without a score.
+  const selId = (scorerSel && roster.some(p => p.id === scorerSel))
+    ? scorerSel
+    : (roster.find(p => !p.sc)?.id ?? null);
+
+  const rows = roster.map(p => {
+    const [bg, fg] = scoreChip(p.sc && !p.sc.pickedUp ? p.sc.strokes - hole.par : 0,
+                               !!p.sc?.pickedUp, !p.sc);
+    return `<button class="scorerow prow ${p.id === selId ? 'selrow' : ''}" data-selp="${p.id}">
       <div class="who"><b class="${p.team}">${esc(p.name)}</b>
         <small>${p.recv > 0 ? `${p.recv} stroke${p.recv > 1 ? 's' : ''}` : p.recv < 0 ? 'gives 1' : 'no stroke'}${p.tee && p.tee.name !== defTee?.name ? ` · ${esc(p.tee.name)}` : ''}</small></div>
-      <div class="stepper">
-        <button data-step="-1" data-pid="${p.id}" aria-label="Fewer strokes for ${esc(p.name)}">−</button>
-        <span class="val num">${p.sc ? p.sc.strokes : '–'}</span>
-        <button data-step="1" data-pid="${p.id}" aria-label="More strokes for ${esc(p.name)}">+</button>
-      </div>
-      <div class="pts num">${p.sc ? p.pts + ' pt' : ''}</div></div>`).join('');
+      <span class="scorechip num" style="background:${bg};color:${fg}">${p.sc ? (p.sc.pickedUp ? 'P' : p.sc.strokes) : '·'}</span>
+      <div class="pts num">${p.sc ? p.pts + ' pt' : ''}</div>
+    </button>`;
+  }).join('');
+
+  const pad = `<div class="pad">
+    ${Array.from({ length: 10 }, (_, i) => `<button class="padbtn num" data-key="${i + 1}" ${selId ? '' : 'disabled'}>${i + 1}</button>`).join('')}
+    <button class="padbtn padp" data-key="P" ${selId ? '' : 'disabled'}>Pick up · no score</button>
+  </div>`;
 
   let verdict = '<span style="color:var(--faint)">Enter all four scores to settle the hole.</span>';
   if (roster.every(p => p.sc)) {
@@ -643,6 +659,7 @@ function viewScorer() {
         <div class="meta">par ${hole.par}<br>stroke index ${hole.si}</div>
         ${weight > 1 ? '<span class="dbl">counts double</span>' : ''}</div>
       ${rows}
+      ${pad}
       <div class="verdict">${verdict}</div>
       <div class="nav2">
         <button class="btn ghost" data-hole="-1" ${scorerHole === 1 ? 'disabled' : ''}>Previous</button>
@@ -960,17 +977,18 @@ function render() {
 
 /* ---------- interaction ---------- */
 document.addEventListener('click', async e => {
-  const t = e.target.closest('[data-tab],[data-round],[data-pick],[data-back],[data-hole],[data-step],[data-repair],[data-signin],[data-signout],[data-player],[data-pback]');
+  clearTimeout(advTimer);
+  const t = e.target.closest('[data-tab],[data-round],[data-pick],[data-back],[data-hole],[data-step],[data-repair],[data-signin],[data-signout],[data-player],[data-pback],[data-selp],[data-key]');
   if (!t) return;
   const d = t.dataset;
 
   if (d.tab) { route = d.tab; scorerMatch = null; playerView = null; authMsg = ''; }
   else if (d.round) { roundIdx = +d.round; scorerMatch = null; }
-  else if (d.pick) { scorerMatch = d.pick; scorerHole = 1; }
+  else if (d.pick) { scorerMatch = d.pick; scorerHole = 1; scorerSel = null; }
   else if ('back' in d) scorerMatch = null;
   else if (d.player) { playerView = d.player; route = 'teams'; }
   else if ('pback' in d) playerView = null;
-  else if (d.hole) scorerHole = Math.min(18, Math.max(1, scorerHole + +d.hole));
+  else if (d.hole) { scorerHole = Math.min(18, Math.max(1, scorerHole + +d.hole)); scorerSel = null; }
   else if ('signin' in d) {
     const email = document.getElementById('em').value.trim();
     if (!email) { authMsg = 'Enter an email address first.'; render(); return; }
@@ -979,15 +997,33 @@ document.addEventListener('click', async e => {
   }
   else if ('signout' in d) { await sb.auth.signOut(); session = null; }
   else if ('repair' in d) { await generatePairings(DB.rounds.find(r => r.idx === roundIdx)); return; }
-  else if (d.step) {
+  else if (d.selp) { scorerSel = d.selp; }
+  else if (d.key) {
     const round = DB.rounds.find(r => r.idx === roundIdx);
     const m = round.matches.find(x => x.id === scorerMatch);
-    const par = DB.courses.find(c => c.id === round.courseId).holes[scorerHole - 1].par;
-    m.scores[d.pid] ??= {};
-    const cur = m.scores[d.pid][scorerHole]?.strokes ?? par - +d.step;
-    const next = Math.min(15, Math.max(1, cur + +d.step));
-    m.scores[d.pid][scorerHole] = { strokes: next, pickedUp:false };
-    saveScore(m.id, d.pid, scorerHole, next);
+    if (!m) return;
+    const order = m.players;
+    const scored = id => { const s = m.scores[id]?.[scorerHole]; return !!s && (s.pickedUp || s.strokes != null); };
+    const target = (scorerSel && order.includes(scorerSel)) ? scorerSel : order.find(id => !scored(id));
+    if (!target) return;
+    const wasComplete = order.every(scored);
+    const entry = d.key === 'P' ? { strokes:null, pickedUp:true } : { strokes:+d.key, pickedUp:false };
+    (m.scores[target] ??= {})[scorerHole] = entry;
+    saveScore(m.id, target, scorerHole, entry.strokes, entry.pickedUp);
+    const next = order.find(id => !scored(id));
+    if (next) scorerSel = next;
+    else {
+      scorerSel = null;
+      // Fresh completion: show the verdict for a beat, then roll to the next hole.
+      if (!wasComplete && scorerHole < 18) {
+        const [mId, h] = [scorerMatch, scorerHole];
+        advTimer = setTimeout(() => {
+          if (route === 'scorer' && scorerMatch === mId && scorerHole === h) {
+            scorerHole++; scorerSel = null; render();
+          }
+        }, 900);
+      }
+    }
   }
   render();
 });
