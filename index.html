@@ -47,6 +47,14 @@ h2{font-size:19px;font-weight:600;margin:0 0 2px}
 .chips{display:flex;gap:6px;overflow-x:auto;margin:0 0 16px;padding-bottom:2px}
 .chip{padding:6px 12px;border-radius:999px;background:var(--paper);border:1px solid var(--line);white-space:nowrap;font-size:14px;color:var(--mid)}
 .chip[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:#fff}
+.chip.cdone{background:#E7F2EA;border-color:#C4DECD;color:#2E6B44}
+.chip.cdone[aria-pressed=true]{background:#2E6B44;border-color:#2E6B44;color:#fff}
+.pickrow{display:flex;align-items:center;gap:10px;width:100%;padding:11px 14px;text-align:left}
+.picknames{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;font-size:14px}
+.picknames span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pickstat{text-align:right;flex-shrink:0}
+.pickstat b{display:block;font-family:'Barlow Condensed',Barlow,sans-serif;font-variant-numeric:tabular-nums;font-size:18px;font-weight:600;line-height:1.1}
+.pickstat small{display:block;font-size:11px;color:var(--faint)}
 
 .srow{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--line)}
 .srow:last-child{border-bottom:0}
@@ -496,8 +504,14 @@ function renderBoard() {
     </div>`;
 }
 
-const roundChips = () => `<div class="chips">${DB.rounds.map(r =>
-  `<button class="chip" aria-pressed="${r.idx === roundIdx}" data-round="${r.idx}">${esc(r.label)}</button>`).join('')}</div>`;
+const roundComplete = round =>
+  round.matches.length > 0 &&
+  round.matches.every(m => m.players.length && playMatch(m, round).complete);
+
+const roundChips = () => `<div class="chips">${DB.rounds.map(r => {
+  const done = roundComplete(r);
+  return `<button class="chip ${done ? 'cdone' : ''}" aria-pressed="${r.idx === roundIdx}" data-round="${r.idx}">${esc(r.label)}${done ? ' ✓' : ''}</button>`;
+}).join('')}</div>`;
 
 /* Ryder Cup style match card: team panels, dark status chip, per-hole tape.
    The 18th cell is double width because it's worth double. */
@@ -566,12 +580,34 @@ function viewScorer() {
   if (!round) return `<h2>Enter scores</h2><p class="sub">No rounds loaded.</p>`;
 
   if (!scorerMatch) {
+    const pickRow = m => {
+      const r = playMatch(m, round);
+      const rm = round.kind === 'roommates';
+      let names;
+      if (rm) {
+        const pair = n => m.players.filter(id => m.pairOf[id] === n)
+          .map(id => player(id)?.name).filter(Boolean).join(' & ');
+        names = `<span>${esc(pair(1))}</span><span>${esc(pair(2))}</span>`;
+      } else {
+        const side = t => m.players.map(player).filter(p => p?.team === t)
+          .map(p => p.name).join(' & ');
+        names = `<span class="A">${esc(side('A'))}</span><span class="B">${esc(side('B'))}</span>`;
+      }
+      let stat = '', color = 'var(--mid)', sub = 'not started';
+      if (r.played > 0) {
+        sub = r.complete ? 'final' : `thru ${r.played}`;
+        if (rm) stat = '';
+        else if (r.margin === 0) stat = 'A/S';
+        else { stat = `${Math.abs(r.margin)} UP`; color = r.margin > 0 ? 'var(--blue)' : 'var(--red)'; }
+      }
+      return `<div class="match"><button class="pickrow" data-pick="${m.id}">
+        <span class="num" style="color:var(--faint);font-size:13px;min-width:42px">${esc(m.teeTime)}</span>
+        <div class="picknames">${names}</div>
+        <div class="pickstat"><b style="color:${color}">${stat}</b><small>${sub}</small></div>
+      </button></div>`;
+    };
     return `<h2>Enter scores</h2><p class="sub">One scorer per group. Pick your match.</p>${roundChips()}
-      ${round.matches.map(m => `<div class="match">
-        <button data-pick="${m.id}" style="display:block;width:100%;text-align:left;padding:13px 14px">
-          <span class="num" style="color:var(--faint);font-size:13px">${esc(m.teeTime)}</span>
-          <div style="font-size:15px;margin-top:2px">${esc(m.players.map(id => player(id)?.name).filter(Boolean).join(', '))}</div>
-        </button></div>`).join('') || `<p class="sub">No pairings yet.</p>`}`;
+      ${round.matches.map(pickRow).join('') || `<p class="sub">No pairings yet.</p>`}`;
   }
 
   const m = round.matches.find(x => x.id === scorerMatch);
@@ -977,7 +1013,12 @@ document.addEventListener('click', async e => {
 
   if (d.tab) { route = d.tab; scorerMatch = null; playerView = null; authMsg = ''; }
   else if (d.round) { roundIdx = +d.round; scorerMatch = null; }
-  else if (d.pick) { scorerMatch = d.pick; scorerHole = 1; scorerSel = null; }
+  else if (d.pick) {
+    scorerMatch = d.pick; scorerSel = null;
+    const round = DB.rounds.find(r => r.idx === roundIdx);
+    const m = round?.matches.find(x => x.id === d.pick);
+    scorerHole = m ? Math.min(18, playMatch(m, round).played + 1) : 1;
+  }
   else if ('back' in d) scorerMatch = null;
   else if (d.player) { playerView = d.player; route = 'teams'; }
   else if ('pback' in d) playerView = null;
