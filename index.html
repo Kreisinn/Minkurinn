@@ -123,8 +123,7 @@ input,select{width:100%;font:inherit;padding:8px 10px;border:1px solid var(--lin
 .padbtn[disabled]{opacity:.4}
 .padp{grid-column:1/-1;font-size:14px;padding:10px 0;font-family:Barlow,sans-serif;font-weight:500}
 .verdict{margin:14px 0;padding:12px 14px;border-radius:10px;background:var(--wash);font-size:15px}
-.nav2{display:flex;gap:8px;margin-top:6px}
-.nav2 .btn{flex:1;text-align:center}
+.arrowbtn{width:42px;padding:9px 0;text-align:center;font-size:17px;line-height:1}
 
 table{width:100%;border-collapse:collapse;font-size:14px}
 th{text-align:left;font-weight:500;color:var(--mid);font-size:12px;padding:6px 4px;border-bottom:1px solid var(--line)}
@@ -653,7 +652,12 @@ function viewScorer() {
     statusCard = matchCard(m, round);
   }
 
-  return `<button class="btn ghost" data-back style="margin-bottom:14px">All matches</button>
+  return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+      <button class="btn ghost" data-back>All matches</button>
+      <span style="flex:1"></span>
+      <button class="btn ghost arrowbtn" data-hole="-1" ${scorerHole === 1 ? 'disabled' : ''} aria-label="Previous hole">←</button>
+      <button class="btn ghost arrowbtn" data-hole="1" ${scorerHole === 18 ? 'disabled' : ''} aria-label="Next hole">→</button>
+    </div>
     <div class="card">
       <div class="holebar"><div class="h num">${scorerHole}</div>
         <div class="meta">par ${hole.par}<br>stroke index ${hole.si}</div>
@@ -661,10 +665,6 @@ function viewScorer() {
       ${rows}
       ${pad}
       <div class="verdict">${verdict}</div>
-      <div class="nav2">
-        <button class="btn ghost" data-hole="-1" ${scorerHole === 1 ? 'disabled' : ''}>Previous</button>
-        <button class="btn" data-hole="1" ${scorerHole === 18 ? 'disabled' : ''}>Next hole</button>
-      </div>
     </div>
     ${statusCard}`;
 }
