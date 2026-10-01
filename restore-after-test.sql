@@ -6,6 +6,11 @@
 
 delete from matches where round_id = (select id from rounds where idx = 1);
 
+-- Remove the test guest and restore the 8-per-team limit.
+delete from players where name = 'Rúnar';
+alter table players drop constraint if exists players_slot_check;
+alter table players add constraint players_slot_check check (slot between 1 and 8);
+
 update rounds set
   course_id  = (select id from courses where name = 'Amarillo (Yellow)'),
   tee_id     = (select t.id from tees t join courses c on c.id = t.course_id

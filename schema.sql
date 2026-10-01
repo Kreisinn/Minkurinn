@@ -146,3 +146,10 @@ end $$;
 
 alter publication supabase_realtime add table scores;
 alter publication supabase_realtime add table rounds;
+
+-- Anonymous scorers may change a player's tee box - and only that.
+-- Column-level grant keeps names, handicaps, teams and slots admin-only.
+revoke update on players from anon;
+grant update (tee_name) on players to anon;
+create policy anon_set_tee on players
+  for update to anon using (true) with check (true);
