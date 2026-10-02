@@ -151,6 +151,13 @@ nav.tabs button{flex:1;padding:9px 0 11px;font-size:11px;letter-spacing:.03em;co
 nav.tabs button b{display:block;font-size:18px;font-weight:500;margin-bottom:1px}
 nav.tabs button[aria-current=page]{color:var(--ink)}
 .note{font-size:13px;color:var(--mid);background:#FCEEDA;border-radius:8px;padding:10px 12px;margin-bottom:14px}
+.mdbody{font-size:15px;color:var(--mid);line-height:1.55}
+.mdbody p{margin:6px 0 0}
+.mdbody h3{font-size:15px;color:var(--ink);margin:10px 0 0;font-weight:600}
+.mdbody h4{font-size:13px;color:var(--ink);margin:8px 0 0;font-weight:600;letter-spacing:.02em;text-transform:uppercase}
+.mdbody ul{margin:6px 0 0;padding-left:18px}
+.mdbody li{margin:2px 0}
+.mdbody a{color:var(--blue)}
 .loading{text-align:center;color:var(--faint);padding:40px 0}
 </style>
 
@@ -259,6 +266,31 @@ let route = 'live', roundIdx = 1, scorerMatch = null, scorerHole = 1, scorerSel 
 
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const player = id => DB.players.find(p => p.id === id);
+
+/* Tiny safe markdown for the notes: escape first, then # ## headings,
+   **bold**, *italic*, - bullets, [text](https://...) links, paragraphs. */
+function md(src) {
+  const inline = x => x
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, txt, url) =>
+      /^(https?:\/\/|mailto:|tel:)/i.test(url)
+        ? `<a href="${url}" target="_blank" rel="noopener">${txt}</a>` : txt)
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+    .replace(/\*([^*]+)\*/g, '<i>$1</i>');
+  const out = [];
+  let para = [], list = null;
+  const flushP = () => { if (para.length) { out.push(`<p>${inline(para.join('<br>'))}</p>`); para = []; } };
+  const flushL = () => { if (list) { out.push(`<ul>${list.join('')}</ul>`); list = null; } };
+  for (const raw of esc(src).split(/\r?\n/)) {
+    const line = raw.trimEnd();
+    if (/^##\s+/.test(line)) { flushP(); flushL(); out.push(`<h4>${inline(line.replace(/^##\s+/, ''))}</h4>`); }
+    else if (/^#\s+/.test(line)) { flushP(); flushL(); out.push(`<h3>${inline(line.replace(/^#\s+/, ''))}</h3>`); }
+    else if (/^[-*]\s+/.test(line)) { flushP(); (list ??= []).push(`<li>${inline(line.replace(/^[-*]\s+/, ''))}</li>`); }
+    else if (line === '') { flushP(); flushL(); }
+    else { flushL(); para.push(line); }
+  }
+  flushP(); flushL();
+  return out.join('');
+}
 const fmt = n => Number.isInteger(n) ? n : Math.floor(n) ? `${Math.floor(n)}½` : '½';
 
 /* ---------- data layer ---------- */
@@ -805,7 +837,7 @@ function viewScorer() {
 
 const viewInfo = () => `<h2>Trip notes</h2><p class="sub">Barcelona, 8–11 October</p>` +
   (DB.info.map(p => `<div class="card"><h2 style="font-size:16px">${esc(p.title)}</h2>
-    <p style="margin:6px 0 0;color:var(--mid);font-size:15px">${esc(p.body)}</p></div>`).join('')
+    <div class="mdbody">${md(p.body)}</div></div>`).join('')
    || `<p class="sub">Nothing added yet.</p>`);
 
 /* Everything here derives from gross strokes; raw Stableford, no hole weights. */
