@@ -16,7 +16,7 @@ holes, highest total wins. Pairs are assigned by hand in Admin (they can cross
 team lines), grouped two pairs to a tee time. Plain Stableford — no double 18th
 unless you change the round's `hole_weights`.
 
-**Rounds 2–5 — the El Prat Cup.** Team match play, four matches per round, two
+**Rounds 2–3 — fourball cup.** Team match play, four matches per round, two
 players from each team in every group.
 
 On each hole, compare the two teams' Stableford points:
@@ -26,10 +26,18 @@ On each hole, compare the two teams' Stableford points:
 3. Level again, and the hole is halved.
 
 The 18th hole counts double. Every match plays all 18 holes — no close-outs.
-A won match is worth one point, a halved match a half. Four cup rounds means
-sixteen points, so 8–8 is possible; aggregate hole-points are tracked as the
-tiebreak. Cup pairings come from a rotation that gives every player a different
-partner in each of the four rounds.
+
+**Round 4 — singles cup.** Eight 1v1 matches: higher Stableford points wins the
+hole, level halves it, the 18th counts double. Default draw is slot v slot;
+captains rearrange in Admin.
+
+**Round 5 — individual only.** Plain Stableford, no team points. Groups are
+generated from the individual standings, leaders out last.
+
+A won match is worth one point, a halved match a half: 4 + 4 + 8 = sixteen cup
+points, so 8–8 is possible; aggregate hole-points are the tiebreak. Fourball
+pairings come from a rotation that gives every player a different partner.
+All five rounds count toward the individual competition, best four of five.
 
 Handicaps are full allowance (100%), WHS course handicap, strokes by stroke index.
 

@@ -228,7 +228,7 @@ function playMatch(match, round) {
 function standing() {
   const t = { secA:0, secB:0, projA:0, projB:0, hpA:0, hpB:0, live:0, done:0 };
   for (const round of DB.rounds) {
-    if (round.kind !== 'cup') continue;
+    if (round.kind !== 'cup' && round.kind !== 'singles') continue;
     for (const m of round.matches) {
     const r = playMatch(m, round);
     t.hpA += r.hpA; t.hpB += r.hpB;
@@ -389,6 +389,51 @@ async function generatePairings(round) {
     const t = h * 60 + mn + add;
     return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
   });
+
+  const at = add => {
+    const t = h * 60 + mn + add;
+    return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
+  };
+
+  if (round.kind === 'singles') {
+    // Eight 1v1 matches, slot v slot by default; two matches share each tee
+    // time (one fourball on the course). Captains rearrange in the editor.
+    const byTeam = t => DB.players.filter(p => p.team === t).sort((a, b) => a.slot - b.slot);
+    const A = byTeam('A'), B = byTeam('B');
+    if (A.length !== 8 || B.length !== 8) { authMsg = 'Need eight players on each team first.'; return render(); }
+    await sb.from('matches').delete().eq('round_id', round.id);
+    const { data, error } = await sb.from('matches')
+      .insert(Array.from({ length: 8 }, (_, i) =>
+        ({ round_id: round.id, slot: i + 1, tee_time: at(Math.floor(i / 2) * 10) })))
+      .select();
+    if (error) { authMsg = error.message; return render(); }
+    const rows = [];
+    data.sort((a, b) => a.slot - b.slot).forEach((m, i) => {
+      rows.push({ match_id: m.id, player_id: A[i].id });
+      rows.push({ match_id: m.id, player_id: B[i].id });
+    });
+    const res = await sb.from('match_players').insert(rows);
+    authMsg = res.error ? res.error.message : 'Singles drawn slot v slot - rearrange below if the captains disagree.';
+    return refresh();
+  }
+
+  if (round.kind === 'individual') {
+    // Four groups of four, ordered by the individual standings - leaders out last.
+    if (DB.players.length < 16) { authMsg = 'Need sixteen players first.'; return render(); }
+    const order = soloBoard().map(r => r.p).reverse(); // lowest totals first
+    await sb.from('matches').delete().eq('round_id', round.id);
+    const { data, error } = await sb.from('matches')
+      .insert(times.map((t, i) => ({ round_id: round.id, slot: i + 1, tee_time: t })))
+      .select();
+    if (error) { authMsg = error.message; return render(); }
+    const rows = [];
+    data.sort((a, b) => a.slot - b.slot).forEach((m, i) => {
+      for (const p of order.slice(i * 4, i * 4 + 4)) rows.push({ match_id: m.id, player_id: p.id });
+    });
+    const res = await sb.from('match_players').insert(rows);
+    authMsg = res.error ? res.error.message : 'Groups set by individual standings - leaders tee off last.';
+    return refresh();
+  }
 
   if (round.kind === 'roommates') {
     await sb.from('matches').delete().eq('round_id', round.id);
@@ -564,6 +609,19 @@ function viewLive() {
   if (!round) return `<h2>No rounds yet</h2><p class="sub">Run schema.sql and seed.sql in Supabase.</p>`;
   const course = DB.courses.find(c => c.id === round.courseId);
 
+  if (round.kind === 'individual') {
+    const board = individualBoard(round);
+    const rows = board.length ? board.map((r, i) => `<div class="scorerow" style="padding:10px 14px">
+        <span class="num" style="width:24px;color:var(--faint)">${i + 1}</span>
+        <div class="who"><b class="${r.p.team}">${esc(r.p.name)}</b></div>
+        <span class="num" style="font-size:19px;font-weight:600">${r.pts}</span>
+        <span style="width:56px;text-align:right;font-size:13px;color:var(--faint)">${r.thru === 18 ? 'final' : r.thru ? `thru ${r.thru}` : '–'}</span>
+      </div>`).join('') : `<p class="sub" style="padding:14px">No groups yet. Create them in Admin.</p>`;
+    return `<h2>Individual Round</h2>
+      <p class="sub">${esc(round.label)} · Stableford, counts in the individual race only — no team points</p>
+      ${roundChips()}<div class="match">${rows}</div>`;
+  }
+
   if (round.kind === 'roommates') {
     const board = roommatesBoard(round);
     const rows = board.length ? board.map((r, i) => `<div class="scorerow" style="padding:10px 14px">
@@ -595,7 +653,10 @@ function viewScorer() {
       const r = playMatch(m, round);
       const rm = round.kind === 'roommates';
       let names;
-      if (rm) {
+      const ind = round.kind === 'individual';
+      if (ind) {
+        names = `<span>${esc(m.players.map(id => player(id)?.name).filter(Boolean).join(', '))}</span>`;
+      } else if (rm) {
         const pair = n => m.players.filter(id => m.pairOf[id] === n)
           .map(id => player(id)?.name).filter(Boolean).join(' & ');
         names = `<span>${esc(pair(1))}</span><span>${esc(pair(2))}</span>`;
@@ -607,7 +668,7 @@ function viewScorer() {
       let stat = '', color = 'var(--mid)', sub = 'not started';
       if (r.played > 0) {
         sub = r.complete ? 'final' : `thru ${r.played}`;
-        if (rm) stat = '';
+        if (rm || ind) stat = '';
         else if (r.margin === 0) stat = 'A/S';
         else { stat = `${Math.abs(r.margin)} UP`; color = r.margin > 0 ? 'var(--blue)' : 'var(--red)'; }
       }
@@ -629,6 +690,7 @@ function viewScorer() {
   const hole = course.holes[scorerHole - 1];
   const weight = (round.weights || WEIGHTS)[scorerHole - 1];
   const rm = round.kind === 'roommates';
+  const ind = round.kind === 'individual';
   const ids = rm
     ? [...m.players].sort((a, b) => (m.pairOf[a] ?? 9) - (m.pairOf[b] ?? 9))
     : m.players;
@@ -662,9 +724,11 @@ function viewScorer() {
     <button class="padbtn padp" data-key="P" ${selId ? '' : 'disabled'}>Pick up · no score</button>
   </div>`;
 
-  let verdict = '<span style="color:var(--faint)">Enter all four scores to settle the hole.</span>';
+  let verdict = `<span style="color:var(--faint)">Enter all ${roster.length === 2 ? 'both' : roster.length} scores to settle the hole.</span>`;
   if (roster.every(p => p.sc)) {
-    if (rm) {
+    if (ind) {
+      verdict = `<b>Points this hole</b> <span style="color:var(--mid)">— ${roster.map(p => `${esc(p.name)} ${p.pts}`).join(', ')}</span>`;
+    } else if (rm) {
       const sum = n => roster.filter(p => p.pairNo === n).reduce((a, p) => a + p.pts * weight, 0);
       verdict = `<b>Hole points</b> <span style="color:var(--mid)">— pair 1: ${sum(1)}, pair 2: ${sum(2)}${weight > 1 ? ` (worth ${weight}×)` : ''}</span>`;
     } else {
@@ -679,7 +743,15 @@ function viewScorer() {
   }
 
   let statusCard;
-  if (rm) {
+  if (ind) {
+    const board = individualBoard(round).filter(b => roster.some(p => p.id === b.p.id));
+    statusCard = `<div class="card">
+      <div style="font-size:13px;color:var(--mid);text-align:center;margin-bottom:8px">This group</div>
+      ${board.map(b => `<div style="display:flex;justify-content:space-between;font-size:15px;padding:4px 0">
+        <span class="${b.p.team}">${esc(b.p.name)}</span>
+        <span class="num" style="font-weight:600">${b.pts}<span style="color:var(--faint);font-weight:400;font-size:13px"> thru ${b.thru}</span></span>
+      </div>`).join('')}</div>`;
+  } else if (rm) {
     const board = roommatesBoard(round).filter(b =>
       b.names.some(n => roster.find(p => p.name === n)));
     statusCard = `<div class="card">
@@ -904,6 +976,29 @@ function viewSolo() {
     <div class="match">${rows}</div>`;
 }
 
+/* Per-player Stableford board for the individual-only round. */
+function individualBoard(round) {
+  const course = DB.courses.find(c => c.id === round.courseId);
+  if (!course) return [];
+  const rows = [];
+  for (const m of round.matches) for (const id of m.players) {
+    const p = player(id);
+    if (!p) continue;
+    const tee = teeFor(p, round);
+    if (!tee) continue;
+    const ch = courseHandicap(p.index, tee.slope, tee.cr, course.par);
+    let pts = 0, thru = 0;
+    for (const hole of course.holes) {
+      const sc = m.scores[id]?.[hole.hole];
+      if (!sc || (!sc.pickedUp && sc.strokes == null)) break;
+      pts += stableford(sc, hole.par, strokesOnHole(ch, hole.si));
+      thru++;
+    }
+    rows.push({ p, pts, thru });
+  }
+  return rows.sort((a, b) => b.pts - a.pts || b.thru - a.thru);
+}
+
 function viewTeams() {
   if (playerView) return viewPlayer(playerView);
   const st = standing();
@@ -979,10 +1074,16 @@ function viewAdmin() {
       <label style="margin-top:10px">Tees</label>
       <select data-settee>${DB.tees.filter(t => t.courseId === round?.courseId).map(t =>
         `<option value="${t.id}" ${t.id === round?.teeId ? 'selected' : ''}>${esc(t.name)} · ${t.cr} / ${t.slope}</option>`).join('')}</select>
-      <div style="margin-top:12px"><button class="btn ghost" data-repair>${round?.kind === 'roommates' ? 'Create the four groups' : 'Generate pairings for this round'}</button></div>
-      <p style="font-size:13px;color:var(--faint);margin:10px 0 0">${round?.kind === 'roommates'
-        ? 'The roommates round is paired by hand. Create the groups, then assign two pairs to each below. Recreating the groups clears any scores already entered.'
-        : 'Rotation gives every player a different partner across the cup rounds. Any match can also be edited by hand below — for round 5, generate first, then let the captains overwrite the picks. Regenerating clears any scores already entered for the round.'}</p>
+      <div style="margin-top:12px"><button class="btn ghost" data-repair>${
+        round?.kind === 'roommates' ? 'Create the four groups'
+        : round?.kind === 'singles' ? 'Draw the eight singles'
+        : round?.kind === 'individual' ? 'Create groups from standings'
+        : 'Generate pairings for this round'}</button></div>
+      <p style="font-size:13px;color:var(--faint);margin:10px 0 0">${
+        round?.kind === 'roommates' ? 'The roommates round is paired by hand. Create the groups, then assign two pairs to each below. Recreating clears any scores already entered.'
+        : round?.kind === 'singles' ? 'Generating draws the eight singles slot v slot, two matches per tee time. The captains rearrange the matchups below. Regenerating clears any scores already entered.'
+        : round?.kind === 'individual' ? 'Generating makes four groups of four ordered by the individual standings, leaders out last. No team points in this round. Regenerating clears any scores already entered.'
+        : 'Rotation gives every player a different partner across the fourball rounds. Any match can also be edited by hand below. Regenerating clears any scores already entered for the round.'}</p>
       ${round ? pairEditor(round) : ''}
     </div>
 
@@ -1004,22 +1105,25 @@ function pairEditor(round) {
     .map(id => player(id)?.name).filter(Boolean);
   const opt = (sel, pool) => `<option value=""></option>` + pool.map(p =>
     `<option value="${p.id}" ${p.id === sel ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
+  const singles = round.kind === 'singles';
+  const ind = round.kind === 'individual';
+  const seats = singles ? 1 : 2;
   const seat = (m, pairNo, i) => {
-    // Cup rounds: column 1 is team A, column 2 is team B. Roommates: free pairs.
-    const pool = cup ? DB.players.filter(p => p.team === (pairNo === 1 ? 'A' : 'B')) : DB.players;
-    const cur = cup
+    // Cup/singles: column 1 is team A, column 2 team B. Roommates/individual: anyone.
+    const pool = (cup && !ind) ? DB.players.filter(p => p.team === (pairNo === 1 ? 'A' : 'B')) : DB.players;
+    const cur = (cup && !ind)
       ? m.players.filter(id => player(id)?.team === (pairNo === 1 ? 'A' : 'B'))
-      : m.players.filter(id => m.pairOf[id] === pairNo);
-    return `<select data-slotmatch="${m.id}" data-slotpair="${pairNo}" aria-label="Group ${m.slot} ${cup ? 'team' : 'pair'} ${pairNo} player ${i + 1}" style="margin-bottom:6px">${opt(cur[i], pool)}</select>`;
+      : m.players.filter(id => (m.pairOf[id] ?? (m.players.indexOf(id) < 2 ? 1 : 2)) === pairNo);
+    return `<select data-slotmatch="${m.id}" data-slotpair="${pairNo}" aria-label="${singles ? 'Match' : 'Group'} ${m.slot} side ${pairNo} player ${i + 1}" style="margin-bottom:6px">${opt(cur[i], pool)}</select>`;
   };
-  const colLabel = n => cup ? esc(TEAMS[n === 1 ? 'A' : 'B'].name) : `Pair ${n}`;
+  const colLabel = n => (cup && !ind) ? esc(TEAMS[n === 1 ? 'A' : 'B'].name) : (round.kind === 'roommates' ? `Pair ${n}` : `Players ${n === 1 ? '1-2' : '3-4'}`);
   return `${dupes.length ? `<div class="note" style="margin-top:12px">In two groups: ${esc(dupes.join(', '))}.</div>` : ''}
     ${round.matches.map(m => `
     <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
-      <div style="font-size:13px;color:var(--mid);margin-bottom:6px">Group ${m.slot} · ${esc(m.teeTime)}</div>
+      <div style="font-size:13px;color:var(--mid);margin-bottom:6px">${singles ? 'Match' : 'Group'} ${m.slot} · ${esc(m.teeTime)}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-        <div><label>${colLabel(1)}</label>${seat(m, 1, 0)}${seat(m, 1, 1)}</div>
-        <div><label>${colLabel(2)}</label>${seat(m, 2, 0)}${seat(m, 2, 1)}</div>
+        <div><label>${colLabel(1)}</label>${Array.from({ length: seats }, (_, i) => seat(m, 1, i)).join('')}</div>
+        <div><label>${colLabel(2)}</label>${Array.from({ length: seats }, (_, i) => seat(m, 2, i)).join('')}</div>
       </div>
     </div>`).join('')}`;
 }

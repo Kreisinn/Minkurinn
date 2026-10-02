@@ -19,7 +19,7 @@ const src = html.match(/<script type="module">([\s\S]*)<\/script>/)[1]
 
 const out = join(tmpdir(), 'elprat-app-under-test.mjs');
 writeFileSync(out, src + `
-export { DB, standing, roommatesBoard, playMatch, player, playerStats,
+export { DB, standing, roommatesBoard, individualBoard, playMatch, player, playerStats,
          viewPlayer, scoreChip, soloBoard, roundComplete, teeFor, courseHandicap };
 `);
 
@@ -123,5 +123,35 @@ const partial = { ...cupRound, id:'rp',
                        b2: par18.map((v, i) => i < 11 ? v : null) }) }] };
 assert.equal(roundComplete(partial), false);
 assert.equal(playMatch(partial.matches[0], partial).played, 11, 'pick would jump to hole 12');
+
+/* ---------- singles round feeds the cup; 1v1 resolution; double 18 ---------- */
+const singlesRound = { id:'r4', idx:4, label:'R4', date:'2026-10-10', kind:'singles',
+  courseId:'c1', teeId:'t1', weights:[...Array(17).fill(1), 2],
+  matches:[{ id:'s1', slot:1, teeTime:'09:00', players:['a1','b1'], pairOf:{},
+    scores: mkScores({ a1:birdieOn(18), b1:par18 }) },
+            { id:'s2', slot:2, teeTime:'09:00', players:['a2','b1'], pairOf:{},
+    scores: mkScores({ a2:par18, b1:par18 }) }] };  // same tee both sides -> level
+const sr = playMatch(singlesRound.matches[0], singlesRound);
+assert.equal(sr.complete, true);
+assert.equal(sr.margin, 2, 'singles birdie on the doubled 18th is worth two');
+assert.deepEqual(sr.matchPoints, { A:1, B:0 });
+const halved = playMatch(singlesRound.matches[1], singlesRound);
+assert.deepEqual(halved.matchPoints, { A:0.5, B:0.5 }, 'level singles halves, no partner fallback');
+
+/* ---------- individual round: no cup points, board sorted ---------- */
+const indRound = { id:'r5', idx:5, label:'R5', date:'2026-10-11', kind:'individual',
+  courseId:'c1', teeId:'t1', weights:Array(18).fill(1),
+  matches:[{ id:'i1', slot:1, teeTime:'09:00', players:['a1','a2','b1','b2'], pairOf:{},
+    scores: mkScores({ a1:birdieOn(3), a2:par18, b1:par18, b2:par18 }) }] };
+DB.rounds = [rmRound, cupRound, singlesRound, indRound];
+const t2 = standing();
+assert.equal(t2.secA, 1 + 1 + 0.5, 'fourball win, singles win, half from the halved singles');
+assert.equal(t2.secB, 0.5, 'halved singles');
+assert.equal(t2.done, 3, 'three cup matches complete; individual round contributes none');
+const { individualBoard } = await import(out);
+const ib = individualBoard(indRound);
+assert.equal(ib.length, 4);
+assert.equal(ib[0].p.id, 'a1'); assert.equal(ib[0].pts, 37);
+assert.equal(ib[1].pts, 36);
 
 console.log('ALL APP LOGIC OK');

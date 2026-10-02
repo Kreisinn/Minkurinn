@@ -52,7 +52,7 @@ create table rounds (
   label        text not null,
   play_date    date not null,
   start_time   time,
-  kind         text not null default 'cup' check (kind in ('cup', 'roommates')),
+  kind         text not null default 'cup' check (kind in ('cup', 'roommates', 'singles', 'individual')),
   course_id    uuid references courses(id),
   tee_id       uuid references tees(id),
   hole_weights int[] not null default '{1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2}',
@@ -64,7 +64,7 @@ create table rounds (
 create table matches (
   id       uuid primary key default gen_random_uuid(),
   round_id uuid not null references rounds(id) on delete cascade,
-  slot     int  not null check (slot between 1 and 4),
+  slot     int  not null check (slot between 1 and 8),
   tee_time time,
   unique (round_id, slot)
 );
@@ -106,8 +106,8 @@ insert into rounds (idx, label, play_date, kind, hole_weights) values
   (1, 'R1 - Thu 8 Oct - Roommates', '2026-10-08', 'roommates', '{1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1}'),
   (2, 'R2 - Fri 9 Oct AM',  '2026-10-09', 'cup', default),
   (3, 'R3 - Fri 9 Oct PM',  '2026-10-09', 'cup', default),
-  (4, 'R4 - Sat 10 Oct',    '2026-10-10', 'cup', default),
-  (5, 'R5 - Sun 11 Oct',    '2026-10-11', 'cup', default);
+  (4, 'R4 - Sat 10 Oct - Singles',    '2026-10-10', 'singles', default),
+  (5, 'R5 - Sun 11 Oct - Individual', '2026-10-11', 'individual', '{1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1}');
 
 alter table teams         enable row level security;
 alter table players       enable row level security;
