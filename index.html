@@ -512,7 +512,8 @@ async function savePairAssign(matchId) {
   await refresh();
 }
 
-/* Combined-points leaderboard for the roommates round. */
+/* Herbergjakeppni leaderboard: better ball - a pair's score on each hole is
+   the higher of the two players' Stableford points. */
 function roommatesBoard(round) {
   const course = DB.courses.find(c => c.id === round.courseId);
   if (!course) return [];
@@ -521,25 +522,24 @@ function roommatesBoard(round) {
     for (const pairNo of [1, 2]) {
       const ids = m.players.filter(id => m.pairOf[id] === pairNo);
       if (!ids.length) continue;
-      const rows = ids.map(id => {
+      const members = ids.map(id => {
         const p = player(id);
         const tee = teeFor(p, round);
-        if (!tee) return { p, pts: 0, thru: 0 };
-        const ch = courseHandicap(p.index, tee.slope, tee.cr, course.par);
-        let pts = 0, thru = 0;
-        for (const hole of course.holes) {
-          const s = m.scores[id]?.[hole.hole];
-          if (!s || (!s.pickedUp && s.strokes == null)) break;
-          pts += stableford(s, hole.par, strokesOnHole(ch, hole.si)) * (round.weights || WEIGHTS)[hole.hole - 1];
-          thru++;
-        }
-        return { p, pts, thru };
+        return { p, ch: tee ? courseHandicap(p.index, tee.slope, tee.cr, course.par) : null };
       });
-      board.push({
-        names: rows.map(r => r.p.name),
-        pts: rows.reduce((a, r) => a + r.pts, 0),
-        thru: Math.min(...rows.map(r => r.thru)),
-      });
+      let pts = 0, thru = 0;
+      for (const hole of course.holes) {
+        const holePts = members.map(mb => {
+          if (mb.ch == null) return null;
+          const sc = m.scores[mb.p.id]?.[hole.hole];
+          if (!sc || (!sc.pickedUp && sc.strokes == null)) return null;
+          return stableford(sc, hole.par, strokesOnHole(mb.ch, hole.si));
+        });
+        if (holePts.some(v => v == null)) break;
+        pts += Math.max(...holePts) * (round.weights || WEIGHTS)[hole.hole - 1];
+        thru++;
+      }
+      board.push({ names: members.map(mb => mb.p.name), pts, thru });
     }
   }
   return board.sort((a, b) => b.pts - a.pts || b.thru - a.thru);
@@ -662,8 +662,8 @@ function viewLive() {
         <span class="num" style="font-size:19px;font-weight:600">${r.pts}</span>
         <span style="width:56px;text-align:right;font-size:13px;color:var(--faint)">${r.thru === 18 ? 'final' : r.thru ? `thru ${r.thru}` : '–'}</span>
       </div>`).join('') : `<p class="sub" style="padding:14px">No pairs assigned yet. Set them up in Admin.</p>`;
-    return `<h2>Roommates Round</h2>
-      <p class="sub">${esc(round.label)} · combined Stableford points per pair · separate from the cup</p>
+    return `<h2>Herbergjakeppni</h2>
+      <p class="sub">${esc(round.label)} · better ball Stableford per pair · separate from the cup</p>
       ${roundChips()}<div class="match">${rows}</div>`;
   }
 
@@ -761,8 +761,8 @@ function viewScorer() {
     if (ind) {
       verdict = `<b>Points this hole</b> <span style="color:var(--mid)">— ${roster.map(p => `${esc(p.name)} ${p.pts}`).join(', ')}</span>`;
     } else if (rm) {
-      const sum = n => roster.filter(p => p.pairNo === n).reduce((a, p) => a + p.pts * weight, 0);
-      verdict = `<b>Hole points</b> <span style="color:var(--mid)">— pair 1: ${sum(1)}, pair 2: ${sum(2)}${weight > 1 ? ` (worth ${weight}×)` : ''}</span>`;
+      const best = n => { const v = roster.filter(p => p.pairNo === n).map(p => p.pts); return v.length ? Math.max(...v) * weight : 0; };
+      verdict = `<b>Better ball</b> <span style="color:var(--mid)">— pair 1: ${best(1)}, pair 2: ${best(2)}${weight > 1 ? ` (worth ${weight}×)` : ''}</span>`;
     } else {
       const r = resolveHole(roster.filter(p => p.team === 'A').map(p => p.pts),
                             roster.filter(p => p.team === 'B').map(p => p.pts));
