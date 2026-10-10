@@ -351,8 +351,14 @@ async function loadAll() {
     m.players.sort((x,y) => (player(x)?.team ?? '').localeCompare(player(y)?.team ?? ''));
 }
 
+let channel = null, resubTimer = null;
+function scheduleResub() {
+  clearTimeout(resubTimer);
+  resubTimer = setTimeout(subscribe, 4000);
+}
 function subscribe() {
-  sb.channel('cup')
+  if (channel) { try { sb.removeChannel(channel); } catch {} channel = null; }
+  channel = sb.channel('cup-' + Date.now())
     .on('postgres_changes', { event:'*', schema:'public', table:'scores' }, ({ new:n, old:o, eventType }) => {
       const row = n && Object.keys(n).length ? n : o;
       if (!row) return;
@@ -371,10 +377,29 @@ function subscribe() {
     .on('postgres_changes', { event:'*', schema:'public', table:'players' }, refresh)
     .on('postgres_changes', { event:'*', schema:'public', table:'course_holes' }, refresh)
     .subscribe(status => {
-      conn = status === 'SUBSCRIBED' ? 'live' : 'connecting';
+      if (status === 'SUBSCRIBED') {
+        conn = 'live';
+        refresh(); // catch anything that happened while disconnected
+      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        conn = 'connecting';
+        scheduleResub();
+      } else {
+        conn = 'connecting';
+      }
       renderBoard();
     });
 }
+
+/* Phones sleep on the course and the socket dies with them. Waking the app
+   flushes queued writes, reloads the data and rebuilds the subscription. */
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') { flush(); refresh(); subscribe(); }
+});
+addEventListener('pageshow', () => { flush(); refresh(); });
+/* Safety net: converge even if realtime is flaky on roaming data. */
+setInterval(() => {
+  if (document.visibilityState === 'visible') refresh();
+}, 45000);
 
 let refreshing = false;
 async function refresh() {
@@ -401,7 +426,7 @@ async function flush() {
   for (const j of jobs) await push(j);
   if (!pending.length && conn === 'offline') { conn = 'live'; renderBoard(); }
 }
-addEventListener('online', flush);
+addEventListener('online', () => { flush(); refresh(); subscribe(); });
 setInterval(() => { if (pending.length) flush(); }, 15000);
 
 const saveScore = (matchId, playerId, hole, strokes, pickedUp = false) =>
