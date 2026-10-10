@@ -1,3 +1,4 @@
+<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>El Prat Cup 2026</title>
@@ -166,6 +167,8 @@ nav.tabs button[aria-current=page]{color:var(--ink)}
 <nav class="tabs" id="tabs"></nav>
 
 <script type="module">
+const BUILD = '2026-10-11.1';
+console.log('El Prat Cup build', BUILD);
 const CONFIG = {
   url: 'https://ztxljawhlftpvbnhyzoa.supabase.co',
   anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp0eGxqYXdobGZ0cHZibmh5em9hIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkyODkyMTAsImV4cCI6MjEwNDg2NTIxMH0.u1tbMhHsNdnZFy9TI7IKeX_4qhcio5ggQaLqWTY44cQ',
@@ -874,7 +877,7 @@ function viewScorer() {
     ${statusCard}${sheet}`;
 }
 
-const viewInfo = () => `<h2>Trip notes</h2><p class="sub">Barcelona, 8–11 October</p>` +
+const viewInfo = () => `<h2>Trip notes</h2><p class="sub">Barcelona, 8–11 October · build ${BUILD}</p>` +
   (DB.info.map(p => `<div class="card"><h2 style="font-size:16px">${esc(p.title)}</h2>
     <div class="mdbody">${md(p.body)}</div></div>`).join('')
    || `<p class="sub">Nothing added yet.</p>`);
