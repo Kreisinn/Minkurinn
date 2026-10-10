@@ -305,10 +305,17 @@ async function connect() {
 }
 
 async function loadAll() {
+  // Supabase caps a bare select at 1000 rows; the scores table passed that
+  // mid-trip. Page through everything so no table ever truncates silently.
   const q = async (t, sel = '*') => {
-    const { data, error } = await sb.from(t).select(sel);
-    if (error) throw new Error(`${t}: ${error.message}`);
-    return data;
+    const page = 1000, all = [];
+    for (let i = 0; ; i++) {
+      const { data, error } = await sb.from(t).select(sel)
+        .range(i * page, i * page + page - 1);
+      if (error) throw new Error(`${t}: ${error.message}`);
+      all.push(...data);
+      if (data.length < page) return all;
+    }
   };
   const [teams, players, courses, holes, tees, rounds, matches, mp, scores, info] = await Promise.all([
     q('teams'), q('players'), q('courses'), q('course_holes'), q('tees'),
