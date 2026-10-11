@@ -167,7 +167,7 @@ nav.tabs button[aria-current=page]{color:var(--ink)}
 <nav class="tabs" id="tabs"></nav>
 
 <script type="module">
-const BUILD = '2026-10-11.1';
+const BUILD = '2026-10-11.2';
 console.log('El Prat Cup build', BUILD);
 const CONFIG = {
   url: 'https://ztxljawhlftpvbnhyzoa.supabase.co',
@@ -345,6 +345,7 @@ async function loadAll() {
   DB.rounds = rounds.sort((a,b) => a.idx - b.idx).map(r => ({
     id:r.id, idx:r.idx, label:r.label, date:r.play_date, kind:r.kind || 'cup',
     startTime:(r.start_time || '').slice(0,5) || null,
+    rumble:r.rumble || null,
     courseId:r.course_id, teeId:r.tee_id, weights:r.hole_weights,
     matches: matches.filter(m => m.round_id === r.id).sort((a,b) => a.slot - b.slot).map(m => ({
       id:m.id, slot:m.slot, teeTime:(m.tee_time || '').slice(0,5),
@@ -684,6 +685,19 @@ function viewLive() {
   const course = DB.courses.find(c => c.id === round.courseId);
 
   if (round.kind === 'individual') {
+    let rumbleCard = '';
+    if (round.rumble) {
+      const rb = rumbleBoard(round);
+      rumbleCard = rb.length ? `<h2 style="font-size:16px;margin-top:4px">Irish Rumble</h2>
+        <p class="sub">Groups v groups · best 1 counts on 1–6, best 2 on 7–12, best 3 on 13–17, all four on 18</p>
+        <div class="match">${rb.map((g, i) => `<div class="scorerow" style="padding:10px 14px">
+          <span class="num" style="width:24px;color:var(--faint)">${i + 1}</span>
+          <div class="who"><b>${esc(g.teeTime)} group</b><small>${esc(g.names.join(', '))}</small></div>
+          <span class="num" style="font-size:19px;font-weight:600">${g.pts}</span>
+          <span style="width:56px;text-align:right;font-size:13px;color:var(--faint)">${g.thru === 18 ? 'final' : g.thru ? `thru ${g.thru}` : '–'}</span>
+        </div>`).join('')}</div>
+        <h2 style="font-size:16px;margin-top:16px">Individual</h2>` : '';
+    }
     const board = individualBoard(round);
     const rows = board.length ? board.map((r, i) => `<div class="scorerow" style="padding:10px 14px">
         <span class="num" style="width:24px;color:var(--faint)">${i + 1}</span>
@@ -693,7 +707,7 @@ function viewLive() {
       </div>`).join('') : `<p class="sub" style="padding:14px">No groups yet. Create them in Admin.</p>`;
     return `<h2>Individual Round</h2>
       <p class="sub">${esc(round.label)} · Stableford, counts in the individual race only — no team points</p>
-      ${roundChips()}<div class="match">${rows}</div>`;
+      ${roundChips()}${rumbleCard}<div class="match">${rows}</div>`;
   }
 
   if (round.kind === 'roommates') {
@@ -801,7 +815,14 @@ function viewScorer() {
   let verdict = `<span style="color:var(--faint)">Enter all ${roster.length === 2 ? 'both' : roster.length} scores to settle the hole.</span>`;
   if (roster.every(p => p.sc)) {
     if (ind) {
-      verdict = `<b>Points this hole</b> <span style="color:var(--mid)">— ${roster.map(p => `${esc(p.name)} ${p.pts}`).join(', ')}</span>`;
+      const each = roster.map(p => `${esc(p.name)} ${p.pts}`).join(', ');
+      if (round.rumble) {
+        const n = round.rumble[scorerHole - 1] ?? 1;
+        const best = roster.map(p => p.pts).sort((a, b) => b - a).slice(0, n).reduce((a, b) => a + b, 0) * weight;
+        verdict = `<b>Rumble ${best} pts</b> <span style="color:var(--mid)">— best ${n} count${n > 1 ? '' : 's'} · ${each}</span>`;
+      } else {
+        verdict = `<b>Points this hole</b> <span style="color:var(--mid)">— ${each}</span>`;
+      }
     } else if (rm) {
       const best = n => { const v = roster.filter(p => p.pairNo === n).map(p => p.pts); return v.length ? Math.max(...v) * weight : 0; };
       verdict = `<b>Better ball</b> <span style="color:var(--mid)">— pair 1: ${best(1)}, pair 2: ${best(2)}${weight > 1 ? ` (worth ${weight}×)` : ''}</span>`;
@@ -818,8 +839,12 @@ function viewScorer() {
 
   let statusCard;
   if (ind) {
+    const rg = round.rumble ? rumbleBoard(round).find(g => g.matchId === m.id) : null;
     const board = individualBoard(round).filter(b => roster.some(p => p.id === b.p.id));
     statusCard = `<div class="card">
+      ${rg ? `<div style="display:flex;justify-content:space-between;font-size:15px;padding:0 0 8px;border-bottom:1px solid var(--line);margin-bottom:8px">
+        <b>Rumble</b><span class="num" style="font-weight:600">${rg.pts}<span style="color:var(--faint);font-weight:400;font-size:13px"> thru ${rg.thru}</span></span>
+      </div>` : ''}
       <div style="font-size:13px;color:var(--mid);text-align:center;margin-bottom:8px">This group</div>
       ${board.map(b => `<div style="display:flex;justify-content:space-between;font-size:15px;padding:4px 0">
         <span class="${b.p.team}">${esc(b.p.name)}</span>
@@ -1071,6 +1096,37 @@ function individualBoard(round) {
     rows.push({ p, pts, thru });
   }
   return rows.sort((a, b) => b.pts - a.pts || b.thru - a.thru);
+}
+
+/* Irish Rumble: each tee-time group scores the best N Stableford points per
+   hole, N varying by hole (round.rumble). */
+function rumbleBoard(round) {
+  const course = DB.courses.find(c => c.id === round.courseId);
+  if (!course || !round.rumble) return [];
+  const board = [];
+  for (const m of round.matches) {
+    const members = m.players.map(id => {
+      const p = player(id);
+      const tee = p && teeFor(p, round, m);
+      return p && tee ? { p, ch: courseHandicap(p.index, tee.slope, tee.cr, course.par) } : null;
+    }).filter(Boolean);
+    if (!members.length) continue;
+    let pts = 0, thru = 0;
+    for (const hole of course.holes) {
+      const holePts = members.map(mb => {
+        const sc = m.scores[mb.p.id]?.[hole.hole];
+        if (!sc || (!sc.pickedUp && sc.strokes == null)) return null;
+        return stableford(sc, hole.par, strokesOnHole(mb.ch, hole.si));
+      });
+      if (holePts.some(v => v == null)) break;
+      const n = round.rumble[hole.hole - 1] ?? 1;
+      pts += holePts.sort((a, b) => b - a).slice(0, n).reduce((a, b) => a + b, 0)
+             * (round.weights || WEIGHTS)[hole.hole - 1];
+      thru++;
+    }
+    board.push({ matchId: m.id, teeTime: m.teeTime, names: members.map(mb => mb.p.name), pts, thru });
+  }
+  return board.sort((a, b) => b.pts - a.pts || b.thru - a.thru);
 }
 
 function viewTeams() {
