@@ -167,7 +167,7 @@ nav.tabs button[aria-current=page]{color:var(--ink)}
 <nav class="tabs" id="tabs"></nav>
 
 <script type="module">
-const BUILD = '2026-10-11.2';
+const BUILD = '2026-10-11.3';
 console.log('El Prat Cup build', BUILD);
 const CONFIG = {
   url: 'https://ztxljawhlftpvbnhyzoa.supabase.co',
@@ -956,6 +956,60 @@ function scoreChip(diff, pickedUp, unplayed) {
   return ['#DE8A5A', '#fff'];
 }
 
+/* Eclectic: per course, the player's best gross score on each hole across
+   every round played there. Strokes only - no handicap, points or tees. */
+function eclecticCards(pid) {
+  const byCourse = new Map();
+  for (const round of DB.rounds) {
+    const course = DB.courses.find(c => c.id === round.courseId);
+    if (!course) continue;
+    for (const m of round.matches) {
+      if (!m.players.includes(pid)) continue;
+      let best = byCourse.get(course.id);
+      if (!best) { best = Array(18).fill(null); byCourse.set(course.id, best); }
+      for (const hole of course.holes) {
+        const sc = m.scores[pid]?.[hole.hole];
+        if (!sc || sc.pickedUp || sc.strokes == null) continue;
+        const i = hole.hole - 1;
+        if (best[i] == null || sc.strokes < best[i]) best[i] = sc.strokes;
+      }
+    }
+  }
+  const cards = [];
+  for (const [cid, best] of byCourse) {
+    if (!best.some(v => v != null)) continue;
+    const course = DB.courses.find(c => c.id === cid);
+    const holes = course.holes.map(h => ({ n: h.hole, par: h.par, strokes: best[h.hole - 1] }));
+    const nine = arr => arr.map(h => {
+      const [bg, fg] = scoreChip(h.strokes != null ? h.strokes - h.par : 0, false, h.strokes == null);
+      return `<div class="pcell"><small>${h.n}</small>
+        <span class="pchip" style="background:${bg};color:${fg}">${h.strokes ?? '·'}</span></div>`;
+    }).join('');
+    const line = (arr, tag) => {
+      const f = arr.filter(h => h.strokes != null);
+      if (!f.length) return '';
+      const gross = f.reduce((a, h) => a + h.strokes, 0);
+      const full = f.length === arr.length;
+      const diff = gross - arr.reduce((a, h) => a + h.par, 0);
+      return `<div class="nineline"><span>${tag} ${gross}${full ? '' : ` (${f.length}/${arr.length})`}</span>
+        <span>${full ? (diff > 0 ? '+' + diff : diff === 0 ? 'level' : diff) : ''}</span></div>`;
+    };
+    cards.push(`<div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+        <b style="font-size:15px">Best of ${esc(course.name)}</b>
+        <span style="font-size:12px;color:var(--faint)">virtual</span>
+      </div>
+      <div style="font-size:13px;color:var(--mid)">Best gross on each hole across the week</div>
+      <div class="pgrid">${nine(holes.slice(0, 9))}</div>${line(holes.slice(0, 9), 'OUT')}
+      <div class="pgrid">${nine(holes.slice(9))}</div>${line(holes.slice(9), 'IN')}
+      ${line(holes, 'TOTAL')}
+    </div>`);
+  }
+  return cards.length
+    ? `<h2 style="font-size:16px;margin:16px 0 8px">Eclectic — the round he could have played</h2>${cards.join('')}`
+    : '';
+}
+
 function viewPlayer(pid) {
   const p = player(pid);
   if (!p) { playerView = null; return viewTeams(); }
@@ -1028,7 +1082,8 @@ function viewPlayer(pid) {
     <p class="sub">${esc(TEAMS[p.team].name)} · hcp ${p.index} · ${esc(p.teeName)} tees
       · ${s.w}–${s.h}–${s.l}${s.per18 != null ? ` · ${s.per18.toFixed(1)} pts/18` : ''}${s.best ? ` · best round ${s.best}` : ''}</p>
     <div class="legend">${legend}</div>
-    ${cards.join('') || '<p class="sub">Not in any pairings yet.</p>'}`;
+    ${cards.join('') || '<p class="sub">Not in any pairings yet.</p>'}
+    ${eclecticCards(pid)}`;
 }
 
 /* Individual competition: raw Stableford per round, best 4 of 5 count. */
