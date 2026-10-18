@@ -70,16 +70,40 @@ migration-*.sql files are only for preserving data that matters.
 
 1. Create a Supabase project. Put its URL and anon key in `CONFIG` at the top of
    the script in `index.html`.
-2. Run `schema.sql`, then `seed.sql`, then `migration-trips.sql`, in the
-   Supabase SQL editor. The app is multi-trip: the seed becomes trip #1 and
-   new trips are created entirely from the Admin tab.
+2. Run `schema.sql`, then `seed.sql`, then `migration-trips.sql`, then
+   `migration-auth.sql`, in the Supabase SQL editor. The app is multi-trip and
+   multi-user: the seed becomes trip #1, and anyone who signs in can create
+   their own trips from the Admin tab.
 3. Deploy this folder to any static host over HTTPS.
-4. In Supabase, Authentication → URL Configuration: add the deployed URL to both
-   Site URL and Redirect URLs, or magic-link sign-in will fail silently.
-5. Open the app, sign in on the Admin tab, then **turn off new signups** in
-   Supabase. The policies grant edit rights to any authenticated user, so an open
-   signup form is an open admin door.
-6. Generate pairings for each of the five rounds.
+4. In Supabase, Authentication → URL Configuration: add the deployed URL to
+   Site URL, and the deployed URL followed by `**` to Redirect URLs (links carry
+   `?trip=…`), or magic-link sign-in will fail silently.
+5. Leave email signups on, with email confirmation on. Policies key co-admins
+   on the signed-in email address, so it must be a verified one.
+6. Open the app, sign in, set a scoring PIN in Admin → Access, and generate
+   pairings for each round.
+
+### Upgrading an existing database to multi-user
+
+Run `migration-auth.sql` **before** deploying the new `index.html` — the new
+page saves scores through RPCs the migration creates. Every user that already
+existed becomes an admin of every existing trip and the oldest one becomes
+the owner, so nobody loses access. Then set a scoring PIN, and only then turn
+signups back on.
+
+## Who can do what
+
+| Who | Can |
+| --- | --- |
+| Anyone with the link | View the trip. Trips are unlisted, not secret. |
+| Anyone with the trip's PIN | Enter scores, change a player's tee for a round. |
+| Trip admins | Edit the trip: players, rounds, pairings, teams, notes, the PIN. |
+| Trip owner | All of that, plus add and remove admins, delete the trip. |
+| Course owner | Edit that course's holes and tees. Anyone can play it. |
+
+The PIN is checked in the database, not the page. Ten wrong guesses in ten
+minutes locks it for the trip until the window passes. Admins are invited by
+email and can be added before they first sign in.
 
 ## Before the trip
 
@@ -97,7 +121,7 @@ migration-*.sql files are only for preserving data that matters.
 
 - Only gross strokes are stored. Net scores, points, hole winners and standings are
   all derived on read, so correcting a handicap mid-trip re-scores everything.
-- Anyone with the link can enter scores. That is deliberate, and it is not a
-  security boundary.
+- Scoring needs the trip's PIN, entered once per phone. A 4-digit PIN keeps
+  out strangers and mischief; it is not strong security.
 - Failed writes queue in memory and retry, so the scorer keeps working with no
   signal. The queue does not survive a force-quit.
