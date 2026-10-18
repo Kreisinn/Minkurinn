@@ -167,7 +167,7 @@ nav.tabs button[aria-current=page]{color:var(--ink)}
 <nav class="tabs" id="tabs"></nav>
 
 <script type="module">
-const BUILD = '2026-10-11.3';
+const BUILD = '2026-10-18.1';
 console.log('El Prat Cup build', BUILD);
 const CONFIG = {
   url: 'https://ztxljawhlftpvbnhyzoa.supabase.co',
@@ -265,7 +265,8 @@ const partnerRotation = round => {
 
 /* ---------- state ---------- */
 const TEAMS = { A:{ name:'Team A' }, B:{ name:'Team B' } }; // real names load from the teams table
-const DB = { players:[], courses:[], tees:[], rounds:[], info:[] };
+const DB = { players:[], courses:[], tees:[], rounds:[], info:[], trips:[] };
+let trip = null;
 let sb = null, session = null, conn = 'connecting', pending = [];
 let route = 'live', roundIdx = 1, scorerMatch = null, scorerHole = 1, scorerSel = null, advTimer = null, teeSheet = null, lpTimer = null, lpFired = false, playerView = null, authMsg = '';
 
@@ -308,21 +309,35 @@ async function connect() {
 }
 
 async function loadAll() {
-  // Supabase caps a bare select at 1000 rows; the scores table passed that
-  // mid-trip. Page through everything so no table ever truncates silently.
-  const q = async (t, sel = '*') => {
+  // Supabase caps a bare select at 1000 rows; page through everything so no
+  // table ever truncates silently. eq filters scope a table to the trip.
+  const q = async (t, eq = null) => {
     const page = 1000, all = [];
     for (let i = 0; ; i++) {
-      const { data, error } = await sb.from(t).select(sel)
-        .range(i * page, i * page + page - 1);
+      let qq = sb.from(t).select('*').range(i * page, i * page + page - 1);
+      if (eq) for (const [k, v] of Object.entries(eq)) qq = qq.eq(k, v);
+      const { data, error } = await qq;
       if (error) throw new Error(`${t}: ${error.message}`);
       all.push(...data);
       if (data.length < page) return all;
     }
   };
+
+  // Which trip? ?trip=slug wins, else the most recent by start date.
+  const tripRows = await q('trips');
+  const want = new URLSearchParams(location.search).get('trip');
+  const chosen = tripRows.find(x => x.slug === want)
+    || [...tripRows].sort((a, b) => (b.start_date || '').localeCompare(a.start_date || ''))[0];
+  if (!chosen) throw new Error('No trips in the database yet - create one in Admin after signing in, or run migration-trips.sql.');
+  trip = { id: chosen.id, slug: chosen.slug, name: chosen.name, destination: chosen.destination,
+           start: chosen.start_date, end: chosen.end_date,
+           cupTarget: chosen.cup_target ?? 16, soloBest: chosen.solo_best ?? 4 };
+  DB.trips = tripRows.map(x => ({ id: x.id, slug: x.slug, name: x.name }));
+  document.title = trip.name;
+  const by = { trip_id: trip.id };
   const [teams, players, courses, holes, tees, rounds, matches, mp, scores, info] = await Promise.all([
-    q('teams'), q('players'), q('courses'), q('course_holes'), q('tees'),
-    q('rounds'), q('matches'), q('match_players'), q('scores'), q('info_pages'),
+    q('teams', by), q('players', by), q('courses'), q('course_holes'), q('tees'),
+    q('rounds', by), q('matches'), q('match_players'), q('scores'), q('info_pages', by),
   ]);
 
   for (const t of teams) if (TEAMS[t.key]) TEAMS[t.key].name = t.name;
@@ -450,6 +465,44 @@ const saveScore = (matchId, playerId, hole, strokes, pickedUp = false) =>
     { onConflict:'match_id,player_id,hole' }));
 
 const savePlayer = (id, patch) => push(() => sb.from('players').update(patch).eq('id', id));
+const saveTrip = patch => push(() => sb.from('trips').update(patch).eq('id', trip.id));
+const saveTeam = (key, name) =>
+  push(() => sb.from('teams').update({ name }).eq('trip_id', trip.id).eq('key', key));
+
+async function addRound() {
+  const idx = Math.max(0, ...DB.rounds.map(r => r.idx)) + 1;
+  if (idx > 12) { authMsg = 'Twelve rounds is the ceiling.'; return render(); }
+  const { error } = await sb.from('rounds').insert({
+    trip_id: trip.id, idx, label: `R${idx}`,
+    play_date: trip.start || new Date().toISOString().slice(0, 10), kind: 'cup' });
+  authMsg = error ? error.message : '';
+  if (!error) roundIdx = idx;
+  await refresh();
+}
+
+async function addPlayer(name, team, index) {
+  const used = new Set(DB.players.filter(p => p.team === team).map(p => p.slot));
+  let slot = 1; while (used.has(slot) && slot <= 12) slot++;
+  if (slot > 12) { authMsg = 'That team is full.'; return render(); }
+  const { error } = await sb.from('players').insert({
+    trip_id: trip.id, name, team, slot, handicap_index: index });
+  authMsg = error ? error.message : '';
+  await refresh();
+}
+
+async function newTrip() {
+  const slug = 'trip-' + Date.now().toString(36);
+  const { data, error } = await sb.from('trips')
+    .insert({ slug, name: 'New trip', cup_target: 16, solo_best: 4 }).select().single();
+  if (error) { authMsg = error.message; return render(); }
+  const t = await sb.from('teams').insert([
+    { trip_id: data.id, key: 'A', name: 'Team A', color: '#1B4B8F' },
+    { trip_id: data.id, key: 'B', name: 'Team B', color: '#B3322A' },
+  ]);
+  if (t.error) { authMsg = t.error.message; return render(); }
+  location.href = `${location.pathname}?trip=${slug}`;
+}
+
 const saveMatchTee = (matchId, playerId, name) =>
   push(() => sb.from('match_players').update({ tee_name: name })
     .eq('match_id', matchId).eq('player_id', playerId));
@@ -594,11 +647,13 @@ function renderBoard() {
   const label = conn === 'live' ? '' : conn === 'offline'
     ? `saving when back online${pending.length ? ` · ${pending.length}` : ''}` : 'connecting…';
 
-  // One cell per point. Gamlir fills solid+faded from the left, Ungir from the right.
-  const cells = Array.from({ length: 16 }, (_, i) => {
+  // One cell per point; the target comes from the trip.
+  const target = trip?.cupTarget ?? 16;
+  const win = target / 2 + 0.5;
+  const cells = Array.from({ length: target }, (_, i) => {
     const clamp = v => Math.max(0, Math.min(1, v));
     const sA = clamp(t.secA - i), pA = clamp(t.projA - i) - sA;
-    const j = 15 - i;
+    const j = target - 1 - i;
     const sB = clamp(t.secB - j), pB = clamp(t.projB - j) - sB;
     return `<i class="seg">
       ${sA > 0 ? `<b style="left:0;width:${sA * 100}%;background:#4A87D8"></b>` : ''}
@@ -608,11 +663,11 @@ function renderBoard() {
     </i>`;
   }).join('');
 
-  // Winner: first to 8½ secured; at 8-8 after all 16, hole points decide.
+  // Winner: first past the line secured; dead level after every match, hole points decide.
   let winA = '', winB = '';
-  if (t.secA > 8) winA = '<span class="winpill">WINNER</span>';
-  else if (t.secB > 8) winB = '<span class="winpill">WINNER</span>';
-  else if (t.done === 16 && t.secA === 8) {
+  if (t.secA >= win) winA = '<span class="winpill">WINNER</span>';
+  else if (t.secB >= win) winB = '<span class="winpill">WINNER</span>';
+  else if (t.done === target && t.secA === target / 2) {
     if (t.hpA > t.hpB) winA = '<span class="winpill">WINNER · HOLES</span>';
     else if (t.hpB > t.hpA) winB = '<span class="winpill">WINNER · HOLES</span>';
   }
@@ -902,7 +957,7 @@ function viewScorer() {
     ${statusCard}${sheet}`;
 }
 
-const viewInfo = () => `<h2>Trip notes</h2><p class="sub">Barcelona, 8–11 October · build ${BUILD}</p>` +
+const viewInfo = () => `<h2>${esc(trip?.name ?? 'Trip notes')}</h2><p class="sub">${esc(trip?.destination ?? '')}${trip?.start ? ` · ${esc(trip.start)} – ${esc(trip.end ?? '')}` : ''} · build ${BUILD}</p>` +
   (DB.info.map(p => `<div class="card"><h2 style="font-size:16px">${esc(p.title)}</h2>
     <div class="mdbody">${md(p.body)}</div></div>`).join('')
    || `<p class="sub">Nothing added yet.</p>`);
@@ -1106,7 +1161,7 @@ function soloBoard() {
     });
     const scored = rounds.filter(r => r.pts != null);
     const counted = new Set(
-      [...scored].sort((a, b) => b.pts - a.pts).slice(0, 4).map(r => r.idx));
+      [...scored].sort((a, b) => b.pts - a.pts).slice(0, trip?.soloBest ?? 4).map(r => r.idx));
     const total = scored.filter(r => counted.has(r.idx)).reduce((a, r) => a + r.pts, 0);
     return { p, rounds, counted, total };
   }).sort((a, b) => b.total - a.total || a.p.name.localeCompare(b.p.name));
@@ -1126,7 +1181,7 @@ function viewSolo() {
     </div>`;
   }).join('');
   return `<h2>Individual</h2>
-    <p class="sub">Stableford points per round, R1–R5 · best four rounds count (dark), the dropped round is greyed</p>
+    <p class="sub">Stableford points per round · best ${trip?.soloBest ?? 4} rounds count (dark), dropped rounds greyed</p>
     <div class="match">${rows}</div>`;
 }
 
@@ -1215,7 +1270,7 @@ function viewTeams() {
     </div>`;
   };
   return `<h2>Teams</h2>
-    <p class="sub">Record counts finished cup matches · P/18 is Stableford points per 18 holes · Bird is gross birdies, Net is net birdies with strokes</p>
+    <p class="sub">${esc(trip?.name ?? '')} · Record counts finished cup matches · P/18 is Stableford points per 18 holes · Bird is gross birdies, Net is net birdies with strokes</p>
     ${card('A')}${card('B')}`;
 }
 
@@ -1231,7 +1286,24 @@ function viewAdmin() {
 
   const round = DB.rounds.find(r => r.idx === roundIdx);
   const course = DB.courses.find(c => c.id === round?.courseId);
+  const tripCard = `<div class="card"><h2 style="font-size:16px;margin-bottom:10px">Trip</h2>
+      ${DB.trips.length > 1 ? `<label>Showing</label>
+        <select data-switchtrip>${DB.trips.map(x =>
+          `<option value="${esc(x.slug)}" ${x.id === trip.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>` : ''}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
+        <div><label>Name</label><input data-tfield="name" value="${esc(trip.name)}"></div>
+        <div><label>Destination</label><input data-tfield="destination" value="${esc(trip.destination ?? '')}"></div>
+        <div><label>Starts</label><input type="date" data-tfield="start_date" value="${esc(trip.start ?? '')}"></div>
+        <div><label>Ends</label><input type="date" data-tfield="end_date" value="${esc(trip.end ?? '')}"></div>
+        <div><label>Cup points total</label><input data-tfield="cup_target" inputmode="numeric" value="${trip.cupTarget}"></div>
+        <div><label>Solo: best N rounds</label><input data-tfield="solo_best" inputmode="numeric" value="${trip.soloBest}"></div>
+        <div><label>${esc(TEAMS.A.name)} (blue)</label><input data-teamname="A" value="${esc(TEAMS.A.name)}"></div>
+        <div><label>${esc(TEAMS.B.name)} (red)</label><input data-teamname="B" value="${esc(TEAMS.B.name)}"></div>
+      </div>
+      <div style="margin-top:12px"><button class="btn ghost" data-newtrip>Start a new trip</button></div>
+    </div>`;
   return `<h2>Admin</h2><p class="sub">Signed in as ${esc(session.user.email)} · <button data-signout style="text-decoration:underline">sign out</button></p>
+    ${tripCard}
     <div class="note">Course data is transcribed from the club's published scorecards (Sep 2026). Check it against the card in the pro shop on day one — a changed stroke index changes hole winners.</div>
     ${authMsg ? `<div class="note">${esc(authMsg)}</div>` : ''}
 
@@ -1252,14 +1324,20 @@ function viewAdmin() {
 
     <div class="card"><h2 style="font-size:16px;margin-bottom:10px">Rounds</h2>
       ${roundChips()}
-      ${round?.startTime ? `<p style="font-size:13px;color:var(--faint);margin:0 0 10px">First tee ${esc(round.startTime)} · groups every 10 minutes</p>` : ''}
+      ${round ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 0 10px">
+        <div><label>Label</label><input data-rfield="label" value="${esc(round.label)}"></div>
+        <div><label>Date</label><input type="date" data-rfield="play_date" value="${esc(round.date ?? '')}"></div>
+        <div><label>First tee</label><input type="time" data-rfield="start_time" value="${esc(round.startTime ?? '')}"></div>
+        <div><label>Kind</label><select data-rfield="kind">${['cup','roommates','singles','individual'].map(k =>
+          `<option value="${k}" ${round.kind === k ? 'selected' : ''}>${k}</option>`).join('')}</select></div>
+      </div>` : ''}
       <label>Course</label>
       <select data-setcourse>${DB.courses.map(c =>
         `<option value="${c.id}" ${c.id === round?.courseId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
       <label style="margin-top:10px">Tees</label>
       <select data-settee>${DB.tees.filter(t => t.courseId === round?.courseId).map(t =>
         `<option value="${t.id}" ${t.id === round?.teeId ? 'selected' : ''}>${esc(t.name)} · ${t.cr} / ${t.slope}</option>`).join('')}</select>
-      <div style="margin-top:12px"><button class="btn ghost" data-repair>${
+      <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost" data-addroundbtn>Add a round</button><button class="btn ghost" data-repair>${
         round?.kind === 'roommates' ? 'Create the four groups'
         : round?.kind === 'singles' ? 'Draw the eight singles'
         : round?.kind === 'individual' ? 'Create groups from standings'
@@ -1330,7 +1408,7 @@ function render() {
 document.addEventListener('click', async e => {
   clearTimeout(advTimer);
   if (lpFired) { lpFired = false; return; }
-  const t = e.target.closest('[data-tab],[data-round],[data-pick],[data-back],[data-hole],[data-step],[data-repair],[data-signin],[data-signout],[data-player],[data-pback],[data-selp],[data-key],[data-tee],[data-teeclose],[data-teeset]');
+  const t = e.target.closest('[data-tab],[data-round],[data-pick],[data-back],[data-hole],[data-step],[data-repair],[data-signin],[data-signout],[data-player],[data-pback],[data-selp],[data-key],[data-tee],[data-teeclose],[data-teeset],[data-newtrip],[data-addroundbtn],[data-addplayer]');
   if (!t) return;
   const d = t.dataset;
 
@@ -1354,6 +1432,16 @@ document.addEventListener('click', async e => {
   }
   else if ('signout' in d) { await sb.auth.signOut(); session = null; }
   else if ('repair' in d) { await generatePairings(DB.rounds.find(r => r.idx === roundIdx)); return; }
+  else if ('newtrip' in d) { await newTrip(); return; }
+  else if ('addroundbtn' in d) { await addRound(); return; }
+  else if ('addplayer' in d) {
+    const name = document.getElementById('npname')?.value.trim();
+    const team = document.getElementById('npteam')?.value;
+    const idx = parseFloat(document.getElementById('npidx')?.value);
+    if (!name || Number.isNaN(idx)) { authMsg = 'A new player needs a name and an index.'; render(); return; }
+    await addPlayer(name, team, idx);
+    return;
+  }
   else if (d.teeset) {
     const round = DB.rounds.find(r => r.idx === roundIdx);
     const m = round?.matches.find(x => x.id === scorerMatch);
@@ -1412,6 +1500,33 @@ for (const ev of ['pointerup', 'pointercancel', 'pointermove', 'scroll'])
 document.addEventListener('change', e => {
   const d = e.target.dataset;
   if (d.slotmatch) { savePairAssign(d.slotmatch); return; }
+  if (d.switchtrip !== undefined) { location.href = `${location.pathname}?trip=${encodeURIComponent(e.target.value)}`; return; }
+  if (d.tfield) {
+    const v = ['cup_target', 'solo_best'].includes(d.tfield) ? parseInt(e.target.value, 10) : e.target.value.trim();
+    if (['cup_target', 'solo_best'].includes(d.tfield) && (Number.isNaN(v) || v < 1)) return;
+    if (d.tfield === 'name') trip.name = v;
+    if (d.tfield === 'destination') trip.destination = v;
+    if (d.tfield === 'start_date') trip.start = v;
+    if (d.tfield === 'end_date') trip.end = v;
+    if (d.tfield === 'cup_target') trip.cupTarget = v;
+    if (d.tfield === 'solo_best') trip.soloBest = v;
+    saveTrip({ [d.tfield]: v === '' ? null : v });
+    render(); return;
+  }
+  if (d.teamname) {
+    const v = e.target.value.trim(); if (!v) return;
+    TEAMS[d.teamname].name = v; saveTeam(d.teamname, v); render(); return;
+  }
+  if (d.rfield) {
+    const round = DB.rounds.find(r => r.idx === roundIdx); if (!round) return;
+    const v = e.target.value;
+    if (d.rfield === 'label') round.label = v;
+    if (d.rfield === 'play_date') round.date = v;
+    if (d.rfield === 'start_time') round.startTime = v || null;
+    if (d.rfield === 'kind') round.kind = v;
+    saveRound(round.id, { [d.rfield]: v === '' ? null : v });
+    render(); return;
+  }
   if (d.pname) {
     const v = e.target.value.trim(); if (!v) return;
     player(d.pname).name = v; savePlayer(d.pname, { name:v });

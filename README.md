@@ -10,9 +10,10 @@ players open a link and add it to their home screen.
 
 Two competitions over five rounds.
 
-**Round 1 — the Roommates Round.** A separate competition. Players compete in
-pairs; a pair's score is the two players' combined Stableford points over 18
-holes, highest total wins. Pairs are assigned by hand in Admin (they can cross
+**Round 1 — the Roommates Round (herbergjakeppni).** A separate competition.
+Players compete in pairs, scored as traditional better ball: on each hole the
+pair counts the higher of the two players' Stableford points, highest 18-hole
+total wins. Pairs are assigned by hand in Admin (they can cross
 team lines), grouped two pairs to a tee time. Plain Stableford — no double 18th
 unless you change the round's `hole_weights`.
 
@@ -69,7 +70,9 @@ migration-*.sql files are only for preserving data that matters.
 
 1. Create a Supabase project. Put its URL and anon key in `CONFIG` at the top of
    the script in `index.html`.
-2. Run `schema.sql`, then `seed.sql`, in the Supabase SQL editor.
+2. Run `schema.sql`, then `seed.sql`, then `migration-trips.sql`, in the
+   Supabase SQL editor. The app is multi-trip: the seed becomes trip #1 and
+   new trips are created entirely from the Admin tab.
 3. Deploy this folder to any static host over HTTPS.
 4. In Supabase, Authentication → URL Configuration: add the deployed URL to both
    Site URL and Redirect URLs, or magic-link sign-in will fail silently.

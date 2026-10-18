@@ -1,3 +1,5 @@
+-- Fresh install: run this file, then seed.sql, then migration-trips.sql.
+-- The migration wraps the seeded data as trip #1 (same path production took).
 -- El Prat cup, 8-11 October 2026.
 -- Run this in the Supabase SQL editor.
 
@@ -56,6 +58,7 @@ create table rounds (
   course_id    uuid references courses(id),
   tee_id       uuid references tees(id),
   hole_weights int[] not null default '{1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2}',
+  rumble       int[] check (rumble is null or array_length(rumble, 1) = 18),
   status       text not null default 'scheduled'
                  check (status in ('scheduled', 'live', 'final')),
   constraint hole_weights_len check (array_length(hole_weights, 1) = 18)
@@ -73,6 +76,7 @@ create table match_players (
   match_id  uuid not null references matches(id) on delete cascade,
   player_id uuid not null references players(id),
   pair      smallint check (pair in (1, 2)),  -- roommates round only
+  tee_name  text,  -- per-round tee; null = player's default tee
   primary key (match_id, player_id)
 );
 
@@ -108,6 +112,8 @@ insert into rounds (idx, label, play_date, kind, hole_weights) values
   (3, 'R3 - Fri 9 Oct PM',  '2026-10-09', 'cup', default),
   (4, 'R4 - Sat 10 Oct - Singles',    '2026-10-10', 'singles', default),
   (5, 'R5 - Sun 11 Oct - Individual', '2026-10-11', 'individual', '{1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1}');
+
+update rounds set rumble = '{1,1,1,1,1,1,2,2,2,2,2,2,3,3,3,3,3,4}' where idx = 5;
 
 alter table teams         enable row level security;
 alter table players       enable row level security;
@@ -152,4 +158,10 @@ alter publication supabase_realtime add table rounds;
 revoke update on players from anon;
 grant update (tee_name) on players to anon;
 create policy anon_set_tee on players
+  for update to anon using (true) with check (true);
+
+-- Anonymous scorers may also set a player's tee for one round.
+revoke update on match_players from anon;
+grant update (tee_name) on match_players to anon;
+create policy anon_set_match_tee on match_players
   for update to anon using (true) with check (true);

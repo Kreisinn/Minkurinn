@@ -14,12 +14,14 @@ const src = html.match(/<script type="module">([\s\S]*)<\/script>/)[1]
   .replace(/for \(const ev of \['pointerup'[\s\S]*?\{ passive: true \}\);\n?/, '')
   .replace(/document\.addEventListener[\s\S]*?\n\}\);/g, '')
   .replace(/document\.addEventListener\([^)]*\);\n?/g, '')
-  .replace(/addEventListener\('online', flush\);\n?/, '')
+  .replace(/addEventListener\('online',[^\n]*\n?/, '')
+  .replace(/addEventListener\('pageshow',[^\n]*\n?/, '')
+  .replace(/setInterval\(\(\) => \{\n  if \(document\.visibilityState[\s\S]*?\}, 45000\);\n?/, '')
   .replace(/setInterval\([\s\S]*?15000\);\n?/, '');
 
 const out = join(tmpdir(), 'elprat-app-under-test.mjs');
 writeFileSync(out, src + `
-export { DB, standing, roommatesBoard, individualBoard, playMatch, player, playerStats,
+export { DB, md, rumbleBoard, standing, roommatesBoard, individualBoard, playMatch, player, playerStats,
          viewPlayer, scoreChip, soloBoard, roundComplete, teeFor, courseHandicap };
 `);
 
@@ -63,14 +65,18 @@ DB.rounds = [rmRound, cupRound];
 /* ---------- per-player tees ---------- */
 assert.equal(teeFor(DB.players[3], cupRound).name, 'Fwd', 'named preference wins');
 assert.equal(teeFor(DB.players[0], cupRound).name, 'W', 'others fall back to round default');
+assert.equal(teeFor(DB.players[3], cupRound, { teeOf: { b2: 'W' } }).name, 'W',
+  'a per-round tee on the match beats the player default');
+assert.equal(teeFor(DB.players[3], cupRound, { teeOf: {} }).name, 'Fwd',
+  'no override means the player default still applies');
 assert.equal(courseHandicap(0, 113, 70, 72), -2, 'forward tee gives a plus CH');
 
 /* ---------- roommates board ---------- */
 const board = roommatesBoard(rmRound);
 assert.equal(board.length, 2);
 assert.deepEqual([...board[0].names].sort(), ['Andri', 'Stebbi'].sort());
-assert.equal(board[0].pts, 73, 'birdie pair: 37 + 36');
-assert.equal(board[1].pts, 70, 'pair with forward-tee man: 36 + 34');
+assert.equal(board[0].pts, 37, 'better ball: 17 pars at 2 plus the birdie 3');
+assert.equal(board[1].pts, 36, 'forward-tee net bogeys covered by the partner\'s pars');
 assert.equal(board[0].thru, 18);
 
 /* ---------- cup standing ignores roommates; double 18; partner tiebreak ---------- */
@@ -153,5 +159,36 @@ const ib = individualBoard(indRound);
 assert.equal(ib.length, 4);
 assert.equal(ib[0].p.id, 'a1'); assert.equal(ib[0].pts, 37);
 assert.equal(ib[1].pts, 36);
+
+/* ---------- notes markdown: formatting works, nothing unsafe survives ---------- */
+const { md } = await import(out);
+const h1 = md('# Heading\nText with **bold** and *italic*.');
+assert.ok(h1.includes('<h3>Heading</h3>') && h1.includes('<b>bold</b>') && h1.includes('<i>italic</i>'));
+const ul = md('- one\n- two');
+assert.ok(ul.includes('<ul><li>one</li><li>two</li></ul>'));
+assert.ok(md('[club](https://grgolf.is)').includes('href="https://grgolf.is"'));
+assert.ok(!md('[x](javascript:alert(1))').includes('<a'), 'javascript: links are stripped');
+assert.ok(md('<script>evil()</script>').includes('&lt;script&gt;'), 'HTML is escaped, never executed');
+assert.ok(md('line one\nline two').includes('line one<br>line two'), 'single newline is a line break');
+
+/* ---------- Irish Rumble: best-N per hole, group totals ---------- */
+indRound.rumble = [1,1,1,1,1,1,2,2,2,2,2,2,3,3,3,3,3,4];
+const { rumbleBoard } = await import(out);
+const rb = rumbleBoard(indRound);
+assert.equal(rb.length, 1);
+// holes 1-6 best1: five 2s + the hole-3 birdie 3 = 13; 7-12 best2: 6x4 = 24;
+// 13-17 best3: 5x6 = 30 (b2's forward-tee 1 on SI 17 never among the best 3);
+// 18 all four: 2+2+2+1 = 7  ->  74
+assert.equal(rb[0].pts, 74, 'rumble arithmetic across the count bands');
+assert.equal(rb[0].thru, 18);
+assert.equal(rumbleBoard({ ...indRound, rumble: null }).length, 0, 'no config, no rumble');
+
+/* ---------- eclectic: best gross per hole across the course's rounds ---------- */
+// a1 on TestCourse across four rounds: birdies on holes 5 (R1), 18 (R2), 18 (R4), 3 (R5)
+// -> best card has 3s on holes 3, 5, 18 and pars elsewhere: 15x4 + 3x3 = 69, par 72 -> -3
+const pv2 = viewPlayer('a1');
+assert.ok(pv2.includes('Best of TestCourse'), 'eclectic card present');
+assert.ok(pv2.includes('TOTAL 69'), 'eclectic total is the best-of gross');
+assert.ok(pv2.includes('>-3<'), 'to-par figure shown');
 
 console.log('ALL APP LOGIC OK');

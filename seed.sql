@@ -68,6 +68,19 @@ from pick p where p.idx = r.idx;
 
 insert into info_pages (slug, title, body, sort) values
   ('travel','Getting there','El Prat is in Terrassa, about 30 minutes northwest of central Barcelona at Plans de Bonvilar 17. Club phone +34 937 281 000. Taxis take roughly 25 minutes in the morning, longer coming back through rush hour.',1),
-  ('schedule','The schedule','Thu 8 Oct 11:05 Amarillo (roommates). Fri 9 Oct 08:00 Rosa and 13:05 Amarillo - 36 holes, eat when you can. Sat 10 Oct 13:55 Amarillo. Sun 11 Oct 13:20 Rosa.',2),
-  ('format','The format','Round 1 is the Roommates Round: combined Stableford points per pair, highest total wins, separate from the cup. Rounds 2-5 are the El Prat Cup: on each hole the highest Stableford points wins it; if the best scores are level, the partners decide; level again and the hole is halved. The 18th counts double in cup rounds. Every match plays all 18 holes.',3),
+  ('schedule','The schedule','- **Thu 8 Oct 11:05** Amarillo - Roommates Round
+- **Fri 9 Oct 08:00** Rosa - Cup fourball R2
+- **Fri 9 Oct 13:05** Amarillo - Cup fourball R3 (36-hole day, eat when you can)
+- **Sat 10 Oct 13:55** Amarillo - Cup SINGLES, the decider
+- **Sun 11 Oct 13:20** Rosa - Individual round',2),
+  ('format','The format','# Herbergjakeppni (R1)
+Better ball Stableford per pair - each hole counts the better of the two scores. Separate prize, and every man''s own round still counts in the individual race.
+
+# The cup (16 points, 8.5 wins)
+- **R2-R3 fourball:** highest Stableford points wins the hole; if the best scores are level, the partners decide; level again and the hole is halved. 18th counts double.
+- **R4 singles:** eight 1v1 matches, higher points wins the hole, level halves. 18th counts double.
+- Every match plays all 18 holes. Tie at 8-8 goes to aggregate hole points.
+
+# The individual race
+All five rounds count, plain Stableford, **best four of five**. Round 5 counts here only - no team points on Sunday.',3),
   ('dress','Dress code','Collared shirt, no denim, soft spikes. The clubhouse asks for smart casual after the round.',4);
